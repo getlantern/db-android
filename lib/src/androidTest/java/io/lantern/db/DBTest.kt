@@ -244,6 +244,27 @@ class DBTest {
     }
 
     @Test
+    fun testFindOne() {
+        buildDB().use { db ->
+            val query = "/path/%/thing"
+            assertNull(db.findOne(query))
+            db.mutate { tx ->
+                tx.put("/path/1/thing", "1")
+            }
+            assertEquals("1", db.findOne(query))
+            db.mutate { tx ->
+                tx.put("/path/2/thing", "2")
+            }
+            try {
+                db.findOne<Any>(query)
+                fail("findOne should have failed when 2 values match")
+            } catch (t: Throwable) {
+                assertTrue(t is TooManyMatchesException)
+            }
+        }
+    }
+
+    @Test
     fun testSubscribeDirectLate() {
         buildDB().use { db ->
             var theValue = "thevalue";
@@ -291,8 +312,8 @@ class DBTest {
                     }
                 })
                 fail("re-registering already registered subscriber ID should not be allowed")
-            } catch (e: Exception) {
-                assertTrue(e.cause is IllegalArgumentException)
+            } catch (t: Throwable) {
+                assertTrue(t.cause is IllegalArgumentException)
             }
 
             db.unsubscribe("100")

@@ -44,6 +44,9 @@ abstract class RawSubscriber<T : Any>(
     abstract fun onDelete(path: String)
 }
 
+/**
+ * Like RawSubscriber but receiving the value directly rather than wrapped in a Raw.
+ */
 abstract class Subscriber<T : Any>(id: String, vararg pathPrefixes: String) :
     RawSubscriber<T>(id, *pathPrefixes) {
     override fun onUpdate(path: String, raw: Raw<T>) {
@@ -52,6 +55,11 @@ abstract class Subscriber<T : Any>(id: String, vararg pathPrefixes: String) :
 
     abstract fun onUpdate(path: String, value: T)
 }
+
+/**
+ * Indicates that a call to findOne found more than one matches.
+ */
+class TooManyMatchesException : Exception("More than one value matched path query")
 
 /**
  * Provides a simple key/value store with a map-like interface. It allows the registration of
@@ -357,6 +365,30 @@ open class Queryable internal constructor(
             "SELECT value FROM data WHERE path = ?",
             arrayOf(serde.serialize(path))
         )
+    }
+
+    /**
+     * Gets the single value matching a path query. If there are no values matching the path query,
+     * this returns null.
+     *
+     * @throws TooManyMatchesException If there are more than one values matching the query
+     */
+    @Throws(TooManyMatchesException::class)
+    fun <T : Any> findOne(pathQuery: String): T? {
+        val cursor = db.rawQuery(
+            "SELECT value FROM data WHERE path LIKE(?)",
+            arrayOf(serde.serialize(pathQuery))
+        )
+        cursor.use {
+            if (cursor == null || !cursor.moveToNext()) {
+                return null
+            }
+            val serialized = cursor.getBlob(0)
+            if (cursor.moveToNext()) {
+                throw TooManyMatchesException()
+            }
+            return serde.deserialize(serialized)
+        }
     }
 
     /**
