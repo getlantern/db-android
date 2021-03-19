@@ -1,7 +1,7 @@
 package test
 
-import io.lantern.observablemodel.Serde
-import io.lantern.observablemodel.Test.TestMessage
+import io.lantern.db.Serde
+import io.lantern.db.Test.TestMessage
 import org.junit.Assert.*
 import org.junit.Test
 import java.nio.charset.Charset

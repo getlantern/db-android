@@ -1,4 +1,4 @@
-package io.lantern.observablemodel
+package io.lantern.db
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.Registration

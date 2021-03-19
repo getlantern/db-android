@@ -1,4 +1,4 @@
-package io.lantern.observablemodel
+package io.lantern.db
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -54,10 +54,10 @@ abstract class Subscriber<T : Any>(id: String, vararg pathPrefixes: String) :
 }
 
 /**
- * Observable model provides a simple key/value store with a map-like interface. It allows the
- * registration of observers for any time that a key path changes.
+ * Provides a simple key/value store with a map-like interface. It allows the registration of
+ * subscribers that observe changes to values at key paths.
  */
-class ObservableModel private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Closeable {
+class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Closeable {
     internal val subscribers = RadixTree<PersistentMap<String, RawSubscriber<Any>>>()
     internal val subscribersById = ConcurrentHashMap<String, RawSubscriber<Any>>()
     private val txExecutor = Executors.newSingleThreadExecutor()
@@ -66,17 +66,17 @@ class ObservableModel private constructor(db: SQLiteDatabase) : Queryable(db, Se
 
     companion object {
         /**
-         * Builds an ObservableModel backed by an encrypted SQLite database at the given filePath
+         * Builds a DB backed by an encrypted SQLite database at the given filePath
          *
          * collectionName - the name of the map as stored in the database
          * password - the password used to encrypted the data (the longer the better)
          */
-        fun build(
+        fun createOrOpen(
             ctx: Context,
             filePath: String,
             password: String,
             secureDelete: Boolean = true
-        ): ObservableModel {
+        ): DB {
             SQLiteDatabase.loadLibs(ctx)
             val db = SQLiteDatabase.openOrCreateDatabase(filePath, password, null)
             if (!db.enableWriteAheadLogging()) {
@@ -102,7 +102,7 @@ class ObservableModel private constructor(db: SQLiteDatabase) : Queryable(db, Se
             db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(value, content=data, tokenize='porter unicode61')")
             // Create a table for managing custom counters (currently used only for full text indexing)
             db.execSQL("CREATE TABLE IF NOT EXISTS counters (id INTEGER PRIMARY KEY, value INTEGER)")
-            return ObservableModel(db)
+            return DB(db)
         }
     }
 
@@ -727,7 +727,7 @@ class Transaction internal constructor(
 }
 
 internal class DetailsSubscriber<T : Any>(
-    private val model: ObservableModel,
+    private val model: DB,
     private val originalSubscriber: RawSubscriber<T>
 ) : RawSubscriber<String>(originalSubscriber.id, *originalSubscriber.pathPrefixes) {
     internal val subscribersForDetails = ConcurrentHashMap<String, RawSubscriber<T>>()

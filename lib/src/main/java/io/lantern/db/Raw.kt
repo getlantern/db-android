@@ -1,4 +1,4 @@
-package io.lantern.observablemodel
+package io.lantern.db
 
 /**
  * The raw bytes with the ability to obtain the deserialized value
