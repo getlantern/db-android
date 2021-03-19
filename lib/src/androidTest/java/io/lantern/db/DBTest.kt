@@ -267,7 +267,7 @@ class DBTest {
     @Test
     fun testSubscribeDirectLate() {
         buildDB().use { db ->
-            var theValue = "thevalue";
+            var theValue = "thevalue"
 
             db.mutate { tx ->
                 tx.put("path", theValue)
@@ -292,7 +292,7 @@ class DBTest {
     @Test
     fun testSubscribeDirect() {
         buildDB().use { db ->
-            var currentValue = "original value";
+            var currentValue = "original value"
 
             db.subscribe(object : Subscriber<String>("100", "path") {
                 override fun onUpdate(path: String, value: String) {
@@ -531,7 +531,6 @@ class DBTest {
             .putBoolean("boolean", true).putFloat("float", 1.1.toFloat()).putInt("int", 2)
             .putLong("long", 3).putString("string", "fallbackstring").commit()
         buildDB().use { db ->
-            ;
             // First set up the preferences without a fallback
             val initPrefs = db.asSharedPreferences("/prefs/")
             initPrefs.edit().putBoolean("boolean", true).putFloat("float", 11.11.toFloat())
@@ -555,7 +554,7 @@ class DBTest {
                 ), prefs.all
             )
 
-            assertTrue(db.get<Boolean>("/prefs/boolean") ?: false)
+            assertTrue(db.get("/prefs/boolean") ?: false)
             assertTrue(prefs.getBoolean("boolean", false))
             assertTrue(prefs.getBoolean("fboolean", false))
             assertTrue(prefs.getBoolean("uboolean", true))
@@ -588,14 +587,8 @@ class DBTest {
             val prefs = db.asSharedPreferences("/prefs/")
 
             val updatedKeys = HashSet<String>()
-            val listener = object : SharedPreferences.OnSharedPreferenceChangeListener {
-                override fun onSharedPreferenceChanged(
-                    sharedPreferences: SharedPreferences?,
-                    key: String?
-                ) {
-                    updatedKeys.add(key!!)
-                }
-            }
+            val listener =
+                SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, key -> updatedKeys.add(key!!) }
             prefs.registerOnSharedPreferenceChangeListener(listener)
 
             prefs.edit().putString("string", "My String").putInt("int", 5).commit()
@@ -685,29 +678,29 @@ class DBTest {
                     dir: Path?,
                     attrs: BasicFileAttributes?
                 ): FileVisitResult {
-                    return FileVisitResult.CONTINUE;
+                    return FileVisitResult.CONTINUE
                 }
 
                 override fun visitFile(
                     file: Path?,
                     attrs: BasicFileAttributes?
                 ): FileVisitResult {
-                    Files.delete(file);
-                    return FileVisitResult.CONTINUE;
+                    Files.delete(file)
+                    return FileVisitResult.CONTINUE
                 }
 
                 override fun visitFileFailed(
                     file: Path?,
                     exc: IOException?
                 ): FileVisitResult {
-                    return FileVisitResult.CONTINUE;
+                    return FileVisitResult.CONTINUE
                 }
 
                 override fun postVisitDirectory(
                     dir: Path?,
                     exc: IOException?
                 ): FileVisitResult {
-                    return FileVisitResult.CONTINUE;
+                    return FileVisitResult.CONTINUE
                 }
             })
         }

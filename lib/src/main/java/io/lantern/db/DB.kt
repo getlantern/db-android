@@ -66,8 +66,8 @@ class TooManyMatchesException : Exception("More than one value matched path quer
  * subscribers that observe changes to values at key paths.
  */
 class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Closeable {
-    internal val subscribers = RadixTree<PersistentMap<String, RawSubscriber<Any>>>()
-    internal val subscribersById = ConcurrentHashMap<String, RawSubscriber<Any>>()
+    private val subscribers = RadixTree<PersistentMap<String, RawSubscriber<Any>>>()
+    private val subscribersById = ConcurrentHashMap<String, RawSubscriber<Any>>()
     private val txExecutor = Executors.newSingleThreadExecutor()
     private val currentTransaction = ThreadLocal<Transaction>()
     private val savepointSequence = AtomicInteger()
@@ -155,13 +155,11 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
             throw IllegalArgumentException("subscriber with id ${subscriber.id} already registered")
         }
         subscriber.pathPrefixes.forEach { pathPrefix ->
-            val subscribersForPrefix = subscribers.get(pathPrefix)?.let {
-                it.put(
-                    subscriber.id,
-                    subscriber
-                )
-            } ?: persistentHashMapOf(subscriber.id to subscriber)
-            subscribers.put(pathPrefix, subscribersForPrefix)
+            val subscribersForPrefix = subscribers[pathPrefix]?.put(
+                subscriber.id,
+                subscriber
+            ) ?: persistentHashMapOf(subscriber.id to subscriber)
+            subscribers[pathPrefix] = subscribersForPrefix
 
             if (receiveInitial) {
                 listRaw<T>("${pathPrefix}%").forEach {
@@ -214,11 +212,11 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
             val subscriber = subscribersById.remove(subscriberId)
             subscriber?.pathPrefixes?.forEach { pathPrefix ->
                 val subscribersForPrefix =
-                    subscribers.get(pathPrefix)?.remove(subscriber.id)
+                    subscribers[pathPrefix]?.remove(subscriber.id)
                 if (subscribersForPrefix?.size ?: 0 == 0) {
                     subscribers.remove(pathPrefix)
                 } else {
-                    subscribers.put(pathPrefix, subscribersForPrefix)
+                    subscribers[pathPrefix] = subscribersForPrefix
                 }
             }
             when (subscriber) {
@@ -277,7 +275,7 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
             }
         } else {
             // schedule the work to run in our single threaded executor
-            val future = txExecutor.submit(Callable<T> {
+            val future = txExecutor.submit(Callable {
                 try {
                     db.beginTransaction()
                     currentTransaction.set(tx)
@@ -472,7 +470,7 @@ open class Queryable internal constructor(
         fullTextSearch: String?,
         reverseSort: Boolean,
         onRow: (cursor: Cursor) -> Unit
-    ): Unit {
+    ) {
         val cursor = if (fullTextSearch != null) {
             db.rawQuery(
                 "SELECT data.path, data.value FROM fts INNER JOIN data ON fts.rowid = data.rowid WHERE data.path LIKE ? AND fts.value MATCH ? ORDER BY fts.rank LIMIT ? OFFSET ?",
@@ -637,11 +635,11 @@ class Transaction internal constructor(
      * @return true if the value was successfully put, false if it wasn't because there was already a value
      */
     fun putIfAbsent(path: String, value: Any, fullText: String? = null): Boolean {
-        try {
+        return try {
             doPut(path, value, fullText, false)
-            return true
+            true
         } catch (e: SQLiteConstraintException) {
-            return false
+            false
         }
     }
 
@@ -675,7 +673,7 @@ class Transaction internal constructor(
             )
         }
         updates[path] = Raw(bytes, value)
-        deletions!! -= path
+        deletions -= path
     }
 
     /**
@@ -707,7 +705,7 @@ class Transaction internal constructor(
             }
         }
         db.execSQL("DELETE FROM data WHERE path = ?", arrayOf(serializedPath))
-        deletions!! += path
+        deletions += path
         updates.remove(path)
     }
 
@@ -775,7 +773,7 @@ internal class DetailsSubscriber<T : Any>(
 
     internal fun onUpdate(path: String, detailPath: String, value: Raw<T>) {
         if (!subscribersForDetails.contains(path)) {
-            val subscriberForDetails = SubscriberForDetails<T>(originalSubscriber, path, detailPath)
+            val subscriberForDetails = SubscriberForDetails(originalSubscriber, path, detailPath)
             subscribersForDetails[path] = subscriberForDetails
             model.doSubscribe(subscriberForDetails)
         }

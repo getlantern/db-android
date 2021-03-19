@@ -1,4 +1,4 @@
-package test
+package io.lantern.db
 
 import io.lantern.db.Serde
 import io.lantern.db.Test.TestMessage
@@ -22,7 +22,7 @@ class SerdeTest {
 
     @Test
     fun testKryoWithAndWithoutRegistration() {
-        var serde = Serde()
+        val serde = Serde()
         val obj = KryoMessage("name", 100)
         val bytesUnregistered = serde.serialize(obj)
         assertEquals(

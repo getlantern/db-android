@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Serde provides a serialization/deserialization mechanism that stores Strings as T<string>,
  * protocol buffers as P<protocol buffer serialized> and all other data as K<kryo serialized>.
  */
-internal class Serde() {
+internal class Serde {
     private val kryo = Kryo()
     private val registeredProtocolBufferTypes =
         ConcurrentHashMap<Class<GeneratedMessageLite<*, *>>, Int>()
@@ -93,9 +93,9 @@ internal class Serde() {
     }
 
     companion object {
-        private val TEXT = 'T'.toInt()
-        private val KRYO = 'K'.toInt()
-        private val PROTOCOL_BUFFER = 'P'.toInt()
+        private const val TEXT = 'T'.toInt()
+        private const val KRYO = 'K'.toInt()
+        private const val PROTOCOL_BUFFER = 'P'.toInt()
         private val charset = Charset.defaultCharset()
     }
 }

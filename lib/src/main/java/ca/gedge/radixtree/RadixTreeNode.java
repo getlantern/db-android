@@ -54,7 +54,6 @@ class RadixTreeNode<V> implements Iterable<RadixTreeNode<V>>, Comparable<RadixTr
 	 * Constructs a node from the given prefix.
 	 * 
 	 * @param prefix  the prefix
-	 * @param value  the value
 	 */
 	RadixTreeNode(String prefix) {
 		this(prefix, null);

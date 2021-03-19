@@ -35,7 +35,7 @@ internal class SharedPreferencesAdapter(
     }
 
     override fun getString(key: String, defValue: String?): String? {
-        return db.get<String>(prefixedPath(key)) ?: defValue
+        return db.get(prefixedPath(key)) ?: defValue
     }
 
     override fun getStringSet(key: String, defValues: MutableSet<String>?): MutableSet<String> {
@@ -43,19 +43,19 @@ internal class SharedPreferencesAdapter(
     }
 
     override fun getInt(key: String, defValue: Int): Int {
-        return db.get<Int>(prefixedPath(key)) ?: defValue
+        return db.get(prefixedPath(key)) ?: defValue
     }
 
     override fun getLong(key: String, defValue: Long): Long {
-        return db.get<Long>(prefixedPath(key)) ?: defValue
+        return db.get(prefixedPath(key)) ?: defValue
     }
 
     override fun getFloat(key: String, defValue: Float): Float {
-        return db.get<Float>(prefixedPath(key)) ?: defValue
+        return db.get(prefixedPath(key)) ?: defValue
     }
 
     override fun getBoolean(key: String, defValue: Boolean): Boolean {
-        return db.get<Boolean>(prefixedPath(key)) ?: defValue
+        return db.get(prefixedPath(key)) ?: defValue
     }
 
     override fun contains(key: String): Boolean {
@@ -107,7 +107,7 @@ internal class SharedPreferencesAdapter(
     }
 }
 
-internal class SharedPreferencesEditorAdapter(val adapter: SharedPreferencesAdapter) :
+internal class SharedPreferencesEditorAdapter(private val adapter: SharedPreferencesAdapter) :
     SharedPreferences.Editor {
     private val updates = Collections.synchronizedList(ArrayList<(Transaction) -> Unit>())
 
