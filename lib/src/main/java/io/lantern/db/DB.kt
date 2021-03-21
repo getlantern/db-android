@@ -120,11 +120,11 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
      *
      * The id identifies the type in serialized values.
      *
-     * The id MUST be an integer between 10 and 127.
+     * The id MUST be an short integer 10 or above
      * The id MUST be consistent over time - registering the same class under different IDs will
      * cause incompatibilities with previously stored data.
      */
-    fun <T> registerType(id: Int, type: Class<T>) {
+    fun <T> registerType(id: Short, type: Class<T>) {
         serde.register(id, type)
     }
 
@@ -363,6 +363,27 @@ open class Queryable internal constructor(
             "SELECT value FROM data WHERE path = ?",
             arrayOf(serde.serialize(path))
         )
+    }
+
+    /**
+     * Retrieves the details path stored at path and then retrieves the value that details path
+     * points to. Same logic as #listDetails.
+     */
+    fun <T : Any> getDetail(path: String): T? {
+        val cursor = db.rawQuery(
+            "SELECT d.value FROM data l INNER JOIN data d ON l.value = d.path WHERE l.path = ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T'",
+            arrayOf(serde.serialize(path))
+        )
+        cursor.use {
+            if (cursor == null || !cursor.moveToNext()) {
+                return null
+            }
+            val serialized = cursor.getBlob(0)
+            if (cursor.moveToNext()) {
+                throw TooManyMatchesException()
+            }
+            return serde.deserialize(serialized)
+        }
     }
 
     /**
@@ -672,7 +693,7 @@ class Transaction internal constructor(
                 arrayOf(rowId, fullText)
             )
         }
-        updates[path] = Raw(bytes, value)
+        updates[path] = Raw(serde, bytes, value)
         deletions -= path
     }
 

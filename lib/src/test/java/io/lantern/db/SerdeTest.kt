@@ -1,6 +1,5 @@
 package io.lantern.db
 
-import io.lantern.db.Serde
 import io.lantern.db.Test.TestMessage
 import org.junit.Assert.*
 import org.junit.Test

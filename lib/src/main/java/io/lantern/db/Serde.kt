@@ -18,14 +18,14 @@ internal class Serde {
     private val registeredProtocolBufferTypes =
         ConcurrentHashMap<Class<GeneratedMessageLite<*, *>>, Int>()
     private val registeredProtocolBufferParsers =
-        ConcurrentHashMap<Int, (InputStream) -> GeneratedMessageLite<*, *>>()
+        ConcurrentHashMap<Short, (InputStream) -> GeneratedMessageLite<*, *>>()
 
     init {
         kryo.isRegistrationRequired = false
     }
 
     @Synchronized
-    internal fun <T> register(id: Int, type: Class<T>) {
+    internal fun <T> register(id: Short, type: Class<T>) {
         if (id < 20) {
             // Kryo uses ids between 0-9 for primitive types, don't interfere with those. To be safe, leave extra room.
             throw IllegalArgumentException("attempted to register ID below 20")
@@ -33,11 +33,11 @@ internal class Serde {
         if (GeneratedMessageLite::class.java.isAssignableFrom(type)) {
             val pbufType = type as Class<GeneratedMessageLite<*, *>>
             val parseMethod = pbufType.getMethod("parseFrom", InputStream::class.java)
-            registeredProtocolBufferTypes[pbufType] = id
+            registeredProtocolBufferTypes[pbufType] = id.toInt()
             registeredProtocolBufferParsers[id] =
                 { stream -> parseMethod.invoke(pbufType, stream) as GeneratedMessageLite<*, *> }
         } else {
-            kryo.register(Registration(type, kryo.getDefaultSerializer(type), id))
+            kryo.register(Registration(type, kryo.getDefaultSerializer(type), id.toInt()))
         }
     }
 
@@ -56,7 +56,7 @@ internal class Serde {
                 if (pbufTypeId != null) {
                     // Serialize using protocol buffers
                     dataOut.write(PROTOCOL_BUFFER)
-                    dataOut.writeInt(pbufTypeId)
+                    dataOut.writeShort(pbufTypeId)
                     data.writeTo(dataOut)
                 } else {
                     // fall back to Kryo serialization for unregistered protocol buffer types
@@ -84,11 +84,25 @@ internal class Serde {
         return when (dataIn.read()) {
             TEXT -> dataIn.readBytes().toString(charset) as D
             PROTOCOL_BUFFER -> {
-                val pbufTypeId = dataIn.readInt()
+                val pbufTypeId = dataIn.readShort()
                 val pbufParser = registeredProtocolBufferParsers[pbufTypeId]
                 pbufParser!!(dataIn) as D
             }
             else -> kryo.readClassAndObject(Input(dataIn)) as D
+        }
+    }
+
+    internal fun rawWithoutHeader(bytes: ByteArray): ByteArray {
+        val dataIn = DataInputStream(ByteArrayInputStream(bytes))
+        return when (dataIn.read()) {
+            TEXT -> dataIn.readBytes()
+            PROTOCOL_BUFFER -> {
+                // consume the length
+                dataIn.readShort()
+                // return remaining bytes
+                dataIn.readBytes()
+            }
+            else -> throw AssertionError("rawWithoutHeader not supported for Kryo serialized values")
         }
     }
 

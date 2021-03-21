@@ -13,8 +13,12 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.IOException
+import java.nio.charset.Charset
 import java.nio.file.*
 import java.nio.file.attribute.BasicFileAttributes
+import java.util.*
+import kotlin.collections.ArrayList
+import kotlin.collections.HashSet
 
 @RunWith(AndroidJUnit4::class)
 class DBTest {
@@ -39,9 +43,10 @@ class DBTest {
                 )
             }
             assertEquals("That Person", db.get("/contacts/32af234asdf324"))
+            val raw = db.getRaw<String>("/contacts/32af234asdf324")
             assertEquals(
                 Raw(db.serde, "That Person"),
-                db.getRaw<String>("/contacts/32af234asdf324")
+                raw
             )
 
             assertEquals(
@@ -240,6 +245,18 @@ class DBTest {
             assertEquals("value should have been udpated by regular put", "c", db.get("path"))
 
             assertEquals(arrayListOf("a", "c"), updates)
+        }
+    }
+
+    @Test
+    fun testGetDetails() {
+        buildDB().use { db ->
+            db.mutate { tx ->
+                tx.put("/detail", "detail")
+                tx.put("/index", "/detail")
+            }
+
+            assertEquals("detail", db.getDetail("/index"))
         }
     }
 
@@ -588,7 +605,11 @@ class DBTest {
 
             val updatedKeys = HashSet<String>()
             val listener =
-                SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, key -> updatedKeys.add(key!!) }
+                SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, key ->
+                    updatedKeys.add(
+                        key!!
+                    )
+                }
             prefs.registerOnSharedPreferenceChangeListener(listener)
 
             prefs.edit().putString("string", "My String").putInt("int", 5).commit()
