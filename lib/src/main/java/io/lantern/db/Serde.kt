@@ -59,11 +59,7 @@ internal class Serde {
                     dataOut.writeShort(pbufTypeId)
                     data.writeTo(dataOut)
                 } else {
-                    // fall back to Kryo serialization for unregistered protocol buffer types
-                    dataOut.write(KRYO)
-                    val kryoOut = Output(dataOut)
-                    kryo.writeClassAndObject(kryoOut, data)
-                    kryoOut.close()
+                    throw AssertionError("Attempted to serialize unregistered protocol buffer type ${data::class.java}, please first register this type by calling register()")
                 }
             }
             else -> {

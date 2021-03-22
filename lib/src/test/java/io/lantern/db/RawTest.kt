@@ -38,7 +38,7 @@ class RawTest {
         try {
             kryoRaw.bytes
             Assert.fail("attempting to get bytes from Kryo raw should have thrown exception")
-        } catch (t: Throwable) {
+        } catch (e: AssertionError) {
             // expected
         }
     }

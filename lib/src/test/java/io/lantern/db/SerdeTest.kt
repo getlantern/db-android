@@ -68,17 +68,12 @@ class SerdeTest {
     fun testProtocolBufferObjectWithAndWithoutRegistration() {
         val serde = Serde()
         val obj = TestMessage.newBuilder().setName("name").setNumber(100).build()
-        val bytesUnregistered = serde.serialize(obj)
-        assertEquals(
-            "unregistered object type should be serialized with kryo",
-            'K',
-            bytesUnregistered[0].toChar()
-        )
-        assertEquals(
-            "round-tripped unregistered kryo object should match original",
-            obj,
-            serde.deserialize(bytesUnregistered)
-        )
+        try {
+            serde.serialize(obj)
+            fail("attempt to serialize unregistered protocol buffer object should fail")
+        } catch (e: AssertionError) {
+            // expected
+        }
 
         try {
             serde.register(19, TestMessage::class.java)
@@ -97,15 +92,6 @@ class SerdeTest {
             "round-tripped registered protocol buffer object should match original",
             obj,
             serde.deserialize(bytesRegistered)
-        )
-        assertEquals(
-            "round-tripped unregistered kryo object should still match original",
-            obj,
-            serde.deserialize(bytesUnregistered)
-        )
-        assertTrue(
-            "serialized form of registered object should be shorter than unregistered",
-            bytesRegistered.size < bytesUnregistered.size
         )
     }
 }
