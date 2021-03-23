@@ -10,6 +10,7 @@ class Raw<T : Any> internal constructor(
 ) {
     val bytes: ByteArray by lazy { serde.rawWithoutHeader(allBytes) }
     val value: T by get
+    val valueOrProtoBytes: Any by lazy { serde.deserializedOrProtoBytes(allBytes) }
 
     internal constructor(serde: Serde, bytes: ByteArray) : this(
         serde,

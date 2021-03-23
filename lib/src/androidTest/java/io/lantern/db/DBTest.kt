@@ -13,12 +13,8 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.IOException
-import java.nio.charset.Charset
 import java.nio.file.*
 import java.nio.file.attribute.BasicFileAttributes
-import java.util.*
-import kotlin.collections.ArrayList
-import kotlin.collections.HashSet
 
 @RunWith(AndroidJUnit4::class)
 class DBTest {
@@ -507,6 +503,66 @@ class DBTest {
             )
 
             assertEquals(setOf("/list/1", "/list/2"), deletions)
+        }
+    }
+
+    @Test
+    fun testTail() {
+        buildDB().use { db ->
+            db.mutate { tx ->
+                tx.putAll(
+                    mapOf(
+                        "/detail/1" to "1",
+                        "/detail/5" to "5",
+                        "/list/1" to "/detail/1",
+                        "/list/5" to "/detail/5"
+                    )
+                )
+            }
+
+            var list = emptyList<String>()
+            db.tailDetails(object : Subscriber<List<Raw<String>>>("100", "/list/") {
+                override fun onUpdate(path: String, value: List<Raw<String>>) {
+                    list = value.map { it.value }
+                }
+
+                override fun onDelete(path: String) {
+                    fail("onDelete should never be called")
+                }
+            }, count = 2)
+            assertEquals(listOf("5", "1"), list)
+
+            db.mutate { tx ->
+                tx.put("/list/3", "/detail/3")
+                tx.put("/detail/3", "3")
+            }
+            assertEquals(listOf("5", "3"), list)
+
+            db.mutate { tx ->
+                tx.put("/list/6", "/detail/6")
+                tx.put("/detail/6", "6")
+            }
+            assertEquals(listOf("6", "5"), list)
+
+            db.mutate { tx ->
+                tx.delete("/detail/6")
+            }
+            assertEquals(listOf("5", "3"), list)
+
+            db.mutate { tx ->
+                tx.delete("/list/5")
+            }
+            assertEquals(listOf("3", "1"), list)
+
+            db.mutate { tx ->
+                tx.delete("/list/3")
+            }
+            assertEquals(listOf("1"), list)
+
+            db.mutate { tx ->
+                tx.delete("/list/1")
+            }
+            assertEquals(emptyList<String>(), list)
         }
     }
 

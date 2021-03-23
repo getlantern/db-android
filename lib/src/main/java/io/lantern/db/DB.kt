@@ -137,9 +137,8 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
         subscriber: RawSubscriber<T>,
         receiveInitial: Boolean = true
     ) {
-        txExecutor.submit(Callable<Void> {
+        txExecutor.submit(Callable<Unit> {
             doSubscribe(subscriber, receiveInitial)
-            null
         }).get()
     }
 
@@ -190,25 +189,98 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
         subscriber: RawSubscriber<T>,
         receiveInitial: Boolean = true
     ) {
-        txExecutor.submit(Callable<Void> {
-            val detailsSubscriber = DetailsSubscriber(this, subscriber)
-            doSubscribe(detailsSubscriber, receiveInitial = false)
-            if (receiveInitial) {
-                subscriber.pathPrefixes.forEach { pathPrefix ->
-                    listDetailsRaw<T>("${pathPrefix}%").forEach {
-                        detailsSubscriber.onUpdate(it.path, it.detailPath, it.value)
-                    }
+        txExecutor.submit(Callable<Unit> {
+            doSubscribeDetails(subscriber, receiveInitial)
+        }).get()
+    }
+
+    private fun <T : Any> doSubscribeDetails(
+        subscriber: RawSubscriber<T>,
+        receiveInitial: Boolean = true
+    ) {
+        val detailsSubscriber = DetailsSubscriber(this, subscriber)
+        doSubscribe(detailsSubscriber, receiveInitial = false)
+        if (receiveInitial) {
+            subscriber.pathPrefixes.forEach { pathPrefix ->
+                listDetailsRaw<T>("${pathPrefix}%").forEach {
+                    detailsSubscriber.onUpdate(it.path, it.detailPath, it.value)
                 }
             }
-            null
-        })
+        }
+    }
+
+    /**
+     * Tails the details corresponding to items at the subscribed path (where the tail is the items
+     * with the highest sort order). Detail resolution happens identically to #subscribeDetails.
+     *
+     * The path supplied to onUpdate is the path of the most recently updated item in the list.
+     *
+     * Note - subscriber's onDelete will never be called, deletions just result in onUpdate being
+     * called with a smaller list.
+     *
+     * Note - this currently only works with subscribers with one path prefix
+     */
+    fun <T : Any> tailDetails(
+        subscriber: Subscriber<List<Raw<T>>>,
+        count: Int = Integer.MAX_VALUE
+    ) {
+        if (subscriber.pathPrefixes.size != 1) {
+            throw AssertionError("tailDetails only supports subscribers with 1 path prefix")
+        }
+        val actualSubscriber = object : RawSubscriber<T>(subscriber.id, *subscriber.pathPrefixes) {
+            val items = TreeMap<String, Raw<T>>();
+
+            @Synchronized
+            override fun onUpdate(path: String, raw: Raw<T>) {
+                items[path] = raw
+                val numToRemove = items.size - count
+                if (numToRemove > 0) {
+                    val it = items.iterator()
+
+                    for (i in 1..numToRemove) {
+                        if (!it.hasNext()) {
+                            break;
+                        }
+                        it.next()
+                        it.remove()
+                    }
+                }
+                subscriber.onUpdate(path, items.descendingMap().values.toList())
+            }
+
+            @Synchronized
+            override fun onDelete(path: String) {
+                items.remove(path)
+                // back fill for removed items
+                listDetailsRaw<T>(
+                    "${subscriber.pathPrefixes[0]}%",
+                    reverseSort = true,
+                    start = items.size,
+                    count = 1,
+                ).forEach {
+                    items[it.path] = it.value
+                }
+                subscriber.onUpdate(path, items.descendingMap().values.toList())
+            }
+        }
+
+        txExecutor.submit(Callable<Unit> {
+            doSubscribeDetails(actualSubscriber, false)
+            listDetailsRaw<T>(
+                "${subscriber.pathPrefixes[0]}%",
+                reverseSort = true,
+                count = count
+            ).forEach {
+                actualSubscriber.onUpdate(it.path, it.value)
+            }
+        }).get()
     }
 
     /**
      * Unsubscribes the subscriber identified by subscriberId
      */
     fun unsubscribe(subscriberId: String) {
-        txExecutor.submit(Callable<Void> {
+        txExecutor.submit(Callable<Unit> {
             val subscriber = subscribersById.remove(subscriberId)
             subscriber?.pathPrefixes?.forEach { pathPrefix ->
                 val subscribersForPrefix =
@@ -226,7 +298,6 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
                     )
                 }
             }
-            null
         })
     }
 

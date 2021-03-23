@@ -102,6 +102,24 @@ internal class Serde {
         }
     }
 
+    /**
+     * Returns either the deserialized value (for String and Kryo serialized values) or the protocol
+     * buffer bytes (for protocol buffer serialized values).
+     */
+    internal fun deserializedOrProtoBytes(bytes: ByteArray): Any {
+        val dataIn = DataInputStream(ByteArrayInputStream(bytes))
+        return when (dataIn.read()) {
+            TEXT -> dataIn.readBytes().toString(charset)
+            PROTOCOL_BUFFER -> {
+                // consume the length
+                dataIn.readShort()
+                // return remaining bytes
+                dataIn.readBytes()
+            }
+            else -> kryo.readClassAndObject(Input(dataIn))
+        }
+    }
+
     companion object {
         private const val TEXT = 'T'.toInt()
         private const val KRYO = 'K'.toInt()

@@ -20,6 +20,7 @@ class RawTest {
         val kryoRaw = Raw(serde, 10)
 
         Assert.assertEquals(testString, stringRaw.value)
+        Assert.assertEquals(testString, stringRaw.valueOrProtoBytes)
         Assert.assertEquals(
             testString,
             stringRaw.bytes.toString(Charset.defaultCharset())
@@ -30,11 +31,18 @@ class RawTest {
         Assert.assertTrue(
             Arrays.equals(
                 serialized.copyOfRange(3, serialized.size),
+                pbufRaw.valueOrProtoBytes as ByteArray
+            )
+        )
+        Assert.assertTrue(
+            Arrays.equals(
+                serialized.copyOfRange(3, serialized.size),
                 pbufRaw.bytes
             )
         )
 
         Assert.assertEquals(10, kryoRaw.value)
+        Assert.assertEquals(10, kryoRaw.valueOrProtoBytes)
         try {
             kryoRaw.bytes
             Assert.fail("attempting to get bytes from Kryo raw should have thrown exception")
