@@ -512,6 +512,62 @@ class DBTest {
             db.mutate { tx ->
                 tx.putAll(
                     mapOf(
+                        "/list/1" to "1",
+                        "/list/5" to "5"
+                    )
+                )
+            }
+
+            var list = emptyList<String>()
+            db.tail(object : Subscriber<List<Raw<String>>>("100", "/list/") {
+                override fun onUpdate(path: String, value: List<Raw<String>>) {
+                    list = value.map { it.value }
+                }
+
+                override fun onDelete(path: String) {
+                    fail("onDelete should never be called")
+                }
+            }, count = 2)
+            assertEquals(listOf("5", "1"), list)
+
+            db.mutate { tx ->
+                tx.put("/list/3", "3")
+            }
+            assertEquals(listOf("5", "3"), list)
+
+            db.mutate { tx ->
+                tx.put("/list/6", "6")
+            }
+            assertEquals(listOf("6", "5"), list)
+
+            db.mutate { tx ->
+                tx.delete("/list/6")
+            }
+            assertEquals(listOf("5", "3"), list)
+
+            db.mutate { tx ->
+                tx.delete("/list/5")
+            }
+            assertEquals(listOf("3", "1"), list)
+
+            db.mutate { tx ->
+                tx.delete("/list/3")
+            }
+            assertEquals(listOf("1"), list)
+
+            db.mutate { tx ->
+                tx.delete("/list/1")
+            }
+            assertEquals(emptyList<String>(), list)
+        }
+    }
+
+    @Test
+    fun testTailDetails() {
+        buildDB().use { db ->
+            db.mutate { tx ->
+                tx.putAll(
+                    mapOf(
                         "/detail/1" to "1",
                         "/detail/5" to "5",
                         "/list/1" to "/detail/1",

@@ -209,6 +209,72 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
         }
     }
 
+    /***
+     * Tails the subscribed path (where the tail is the items with the highest sort order).
+     *
+     * The path supplied to onUpdate is the path of the most recently updated item in the list.
+     *
+     * Note - subscriber's onDelete will never be called, deletions just result in onUpdate being
+     * called with a smaller list.
+     *
+     * Note - this currently only works with subscribers with one path prefix
+     */
+    fun <T : Any> tail(
+        subscriber: Subscriber<List<Raw<T>>>,
+        count: Int = Integer.MAX_VALUE
+    ) {
+        if (subscriber.pathPrefixes.size != 1) {
+            throw AssertionError("tail only supports subscribers with 1 path prefix")
+        }
+        val actualSubscriber = object : RawSubscriber<T>(subscriber.id, *subscriber.pathPrefixes) {
+            val items = TreeMap<String, Raw<T>>();
+
+            @Synchronized
+            override fun onUpdate(path: String, raw: Raw<T>) {
+                items[path] = raw
+                val numToRemove = items.size - count
+                if (numToRemove > 0) {
+                    val it = items.iterator()
+
+                    for (i in 1..numToRemove) {
+                        if (!it.hasNext()) {
+                            break;
+                        }
+                        it.next()
+                        it.remove()
+                    }
+                }
+                subscriber.onUpdate(path, items.descendingMap().values.toList())
+            }
+
+            @Synchronized
+            override fun onDelete(path: String) {
+                items.remove(path)
+                // back fill for removed items
+                listRaw<T>(
+                    "${subscriber.pathPrefixes[0]}%",
+                    reverseSort = true,
+                    start = items.size,
+                    count = 1,
+                ).forEach {
+                    items[it.path] = it.value
+                }
+                subscriber.onUpdate(path, items.descendingMap().values.toList())
+            }
+        }
+
+        txExecutor.submit(Callable<Unit> {
+            doSubscribe(actualSubscriber, false)
+            listRaw<T>(
+                "${subscriber.pathPrefixes[0]}%",
+                reverseSort = true,
+                count = count
+            ).forEach {
+                actualSubscriber.onUpdate(it.path, it.value)
+            }
+        }).get()
+    }
+
     /**
      * Tails the details corresponding to items at the subscribed path (where the tail is the items
      * with the highest sort order). Detail resolution happens identically to #subscribeDetails.
