@@ -285,7 +285,11 @@ class DBTest {
             db.mutate { tx ->
                 tx.put("path", theValue)
             }
-            db.subscribe(object : Subscriber<String>("100", "path") {
+            db.subscribe(object : Subscriber<String>(
+                "100",
+                // note the use of a gratuitous trailing % which will be ignored
+                "path%"
+            ) {
                 override fun onUpdate(path: String, value: String) {
                     assertEquals("path", path)
                     assertEquals(theValue, value)

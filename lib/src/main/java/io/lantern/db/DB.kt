@@ -31,8 +31,11 @@ data class Detail<T>(val path: String, val detailPath: String, val value: T)
  */
 abstract class RawSubscriber<T : Any>(
     internal val id: String,
-    internal vararg val pathPrefixes: String
+    private vararg val pathPrefixes: String
 ) {
+    // clean path prefixes in case they included an unnecessary trailing %
+    internal val cleanedPathPrefixes = pathPrefixes.map { it.trimEnd('%') }
+
     /**
      * Called when the value at the given path changes
      */
@@ -153,7 +156,8 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
         ) {
             throw IllegalArgumentException("subscriber with id ${subscriber.id} already registered")
         }
-        subscriber.pathPrefixes.forEach { pathPrefix ->
+
+        subscriber.cleanedPathPrefixes.forEach { pathPrefix ->
             val subscribersForPrefix = subscribers[pathPrefix]?.put(
                 subscriber.id,
                 subscriber
@@ -201,7 +205,7 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
         val detailsSubscriber = DetailsSubscriber(this, subscriber)
         doSubscribe(detailsSubscriber, receiveInitial = false)
         if (receiveInitial) {
-            subscriber.pathPrefixes.forEach { pathPrefix ->
+            subscriber.cleanedPathPrefixes.forEach { pathPrefix ->
                 listDetailsRaw<T>("${pathPrefix}%").forEach {
                     detailsSubscriber.onUpdate(it.path, it.detailPath, it.value)
                 }
@@ -223,10 +227,11 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
         subscriber: Subscriber<List<Raw<T>>>,
         count: Int = Integer.MAX_VALUE
     ) {
-        if (subscriber.pathPrefixes.size != 1) {
+        if (subscriber.cleanedPathPrefixes.size != 1) {
             throw AssertionError("tail only supports subscribers with 1 path prefix")
         }
-        val actualSubscriber = object : RawSubscriber<T>(subscriber.id, *subscriber.pathPrefixes) {
+        val actualSubscriber = object :
+            RawSubscriber<T>(subscriber.id, *subscriber.cleanedPathPrefixes.toTypedArray()) {
             val items = TreeMap<String, Raw<T>>();
 
             @Synchronized
@@ -252,7 +257,7 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
                 items.remove(path)
                 // back fill for removed items
                 listRaw<T>(
-                    "${subscriber.pathPrefixes[0]}%",
+                    "${subscriber.cleanedPathPrefixes[0]}%",
                     reverseSort = true,
                     start = items.size,
                     count = 1,
@@ -266,7 +271,7 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
         txExecutor.submit(Callable<Unit> {
             doSubscribe(actualSubscriber, false)
             listRaw<T>(
-                "${subscriber.pathPrefixes[0]}%",
+                "${subscriber.cleanedPathPrefixes[0]}%",
                 reverseSort = true,
                 count = count
             ).forEach {
@@ -290,50 +295,52 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
         subscriber: Subscriber<List<Raw<T>>>,
         count: Int = Integer.MAX_VALUE
     ) {
-        if (subscriber.pathPrefixes.size != 1) {
+        if (subscriber.cleanedPathPrefixes.size != 1) {
             throw AssertionError("tailDetails only supports subscribers with 1 path prefix")
         }
-        val actualSubscriber = object : RawSubscriber<T>(subscriber.id, *subscriber.pathPrefixes) {
-            val items = TreeMap<String, Raw<T>>();
+        val actualSubscriber =
+            object :
+                RawSubscriber<T>(subscriber.id, *subscriber.cleanedPathPrefixes.toTypedArray()) {
+                val items = TreeMap<String, Raw<T>>();
 
-            @Synchronized
-            override fun onUpdate(path: String, raw: Raw<T>) {
-                items[path] = raw
-                val numToRemove = items.size - count
-                if (numToRemove > 0) {
-                    val it = items.iterator()
+                @Synchronized
+                override fun onUpdate(path: String, raw: Raw<T>) {
+                    items[path] = raw
+                    val numToRemove = items.size - count
+                    if (numToRemove > 0) {
+                        val it = items.iterator()
 
-                    for (i in 1..numToRemove) {
-                        if (!it.hasNext()) {
-                            break;
+                        for (i in 1..numToRemove) {
+                            if (!it.hasNext()) {
+                                break;
+                            }
+                            it.next()
+                            it.remove()
                         }
-                        it.next()
-                        it.remove()
                     }
+                    subscriber.onUpdate(path, items.descendingMap().values.toList())
                 }
-                subscriber.onUpdate(path, items.descendingMap().values.toList())
-            }
 
-            @Synchronized
-            override fun onDelete(path: String) {
-                items.remove(path)
-                // back fill for removed items
-                listDetailsRaw<T>(
-                    "${subscriber.pathPrefixes[0]}%",
-                    reverseSort = true,
-                    start = items.size,
-                    count = 1,
-                ).forEach {
-                    items[it.path] = it.value
+                @Synchronized
+                override fun onDelete(path: String) {
+                    items.remove(path)
+                    // back fill for removed items
+                    listDetailsRaw<T>(
+                        "${subscriber.cleanedPathPrefixes[0]}%",
+                        reverseSort = true,
+                        start = items.size,
+                        count = 1,
+                    ).forEach {
+                        items[it.path] = it.value
+                    }
+                    subscriber.onUpdate(path, items.descendingMap().values.toList())
                 }
-                subscriber.onUpdate(path, items.descendingMap().values.toList())
             }
-        }
 
         txExecutor.submit(Callable<Unit> {
             doSubscribeDetails(actualSubscriber, false)
             listDetailsRaw<T>(
-                "${subscriber.pathPrefixes[0]}%",
+                "${subscriber.cleanedPathPrefixes[0]}%",
                 reverseSort = true,
                 count = count
             ).forEach {
@@ -348,7 +355,7 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
     fun unsubscribe(subscriberId: String) {
         txExecutor.submit(Callable<Unit> {
             val subscriber = subscribersById.remove(subscriberId)
-            subscriber?.pathPrefixes?.forEach { pathPrefix ->
+            subscriber?.cleanedPathPrefixes?.forEach { pathPrefix ->
                 val subscribersForPrefix =
                     subscribers[pathPrefix]?.remove(subscriber.id)
                 if (subscribersForPrefix?.size ?: 0 == 0) {
@@ -917,7 +924,10 @@ class Transaction internal constructor(
 internal class DetailsSubscriber<T : Any>(
     private val model: DB,
     private val originalSubscriber: RawSubscriber<T>
-) : RawSubscriber<String>(originalSubscriber.id, *originalSubscriber.pathPrefixes) {
+) : RawSubscriber<String>(
+    originalSubscriber.id,
+    *originalSubscriber.cleanedPathPrefixes.toTypedArray()
+) {
     internal val subscribersForDetails = ConcurrentHashMap<String, RawSubscriber<T>>()
 
     @Synchronized
