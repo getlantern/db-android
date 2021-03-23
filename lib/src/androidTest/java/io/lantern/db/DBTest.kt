@@ -86,6 +86,22 @@ class DBTest {
                     reverseSort = true
                 )
             )
+
+            assertEquals(
+                arrayListOf(
+                    Detail(
+                        "/contacts/32af234asdf324/messages_by_timestamp/2",
+                        "/messages/a",
+                        "Message A"
+                    ),
+                ), db.listDetails<String>(
+                    "/contacts/%/messages_by_timestamp/2",
+                    0,
+                    10,
+                    reverseSort = true
+                )
+            )
+
             assertEquals(
                 arrayListOf(
                     Detail(
