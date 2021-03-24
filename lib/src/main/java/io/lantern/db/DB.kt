@@ -10,6 +10,7 @@ import net.sqlcipher.Cursor
 import net.sqlcipher.database.SQLiteConstraintException
 import net.sqlcipher.database.SQLiteDatabase
 import java.io.Closeable
+import java.io.File
 import java.util.*
 import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
@@ -68,13 +69,17 @@ class TooManyMatchesException : Exception("More than one value matched path quer
  * Provides a simple key/value store with a map-like interface. It allows the registration of
  * subscribers that observe changes to values at key paths.
  */
-class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Closeable {
+class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, Serde()), Closeable {
     private val subscribers = RadixTree<PersistentMap<String, RawSubscriber<Any>>>()
     private val subscribersById = ConcurrentHashMap<String, RawSubscriber<Any>>()
-    private val txExecutor = Executors.newSingleThreadExecutor()
+    private val txExecutor = Executors.newSingleThreadExecutor {
+        Thread(it, "${name}-tx-executor")
+    }
     private val currentTransaction = ThreadLocal<Transaction>()
     private val savepointSequence = AtomicInteger()
-    private val publishExecutor = Executors.newSingleThreadExecutor()
+    private val publishExecutor = Executors.newSingleThreadExecutor {
+        Thread(it, "${name}-publish-executor")
+    }
 
     companion object {
         /**
@@ -87,7 +92,8 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
             ctx: Context,
             filePath: String,
             password: String,
-            secureDelete: Boolean = true
+            secureDelete: Boolean = true,
+            name: String = File(filePath).name
         ): DB {
             SQLiteDatabase.loadLibs(ctx)
             val db = SQLiteDatabase.openOrCreateDatabase(filePath, password, null)
@@ -114,7 +120,7 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
             db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(value, content=data, tokenize='porter unicode61')")
             // Create a table for managing custom counters (currently used only for full text indexing)
             db.execSQL("CREATE TABLE IF NOT EXISTS counters (id INTEGER PRIMARY KEY, value INTEGER)")
-            return DB(db)
+            return DB(db, name)
         }
     }
 
