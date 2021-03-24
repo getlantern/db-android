@@ -74,6 +74,7 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
     private val txExecutor = Executors.newSingleThreadExecutor()
     private val currentTransaction = ThreadLocal<Transaction>()
     private val savepointSequence = AtomicInteger()
+    private val publishExecutor = Executors.newSingleThreadExecutor()
 
     companion object {
         /**
@@ -385,7 +386,7 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
      * All mutating happens on a single thread. Nested calls to mutate are allowed and will
      * each get their own sub-transaction implemented using savepoints.
      */
-    fun <T> mutate(fn: (tx: Transaction) -> T): T {
+    fun <T> mutate(publishBlocking: Boolean = false, fn: (tx: Transaction) -> T): T {
         var inExecutor = false
         val tx = synchronized(this) {
             val _tx = currentTransaction.get()
@@ -433,10 +434,15 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
             })
             val result = future.get()
             // publish outside of the txExecutor
-            tx.publish()
+            val publishResult = publishExecutor.submit { tx.publish() }
+            if (publishBlocking) {
+                publishResult.get()
+            }
             return result
         }
     }
+
+    fun <T> mutatePublishBlocking(fn: (tx: Transaction) -> T): T = mutate(true, fn)
 
     /**
      * Returns a SharedPreferences backed by this model.
@@ -454,7 +460,9 @@ class DB private constructor(db: SQLiteDatabase) : Queryable(db, Serde()), Close
     @Synchronized
     override fun close() {
         txExecutor.shutdownNow()
+        publishExecutor.shutdownNow()
         txExecutor.awaitTermination(10, TimeUnit.SECONDS)
+        publishExecutor.awaitTermination(10, TimeUnit.SECONDS)
         db.close()
     }
 }

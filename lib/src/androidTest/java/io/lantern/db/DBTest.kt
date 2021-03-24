@@ -23,7 +23,7 @@ class DBTest {
     @Test
     fun testQuery() {
         buildDB().use { db ->
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.putAll(
                     mapOf(
                         "/contacts/32af234asdf324" to "That Person",
@@ -166,7 +166,7 @@ class DBTest {
             "/messages/b" to Message("Message B"),
         )
         buildDB().use { db ->
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 vals.forEach { (path, value) ->
                     tx.put(path, value, fullText = value.body)
                 }
@@ -206,7 +206,7 @@ class DBTest {
             )
 
             // now delete
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 // delete an entry including the full text index
                 tx.delete("/messages/d", extractFullText = { msg: Message -> msg.body })
                 // add the entry back without full-text indexing to make sure it doesn't show up in results
@@ -237,12 +237,12 @@ class DBTest {
                 }
             })
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 assertTrue(tx.putIfAbsent("path", "a"))
             }
             assertEquals("correct value should have been inserted", "a", db.get("path"))
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 assertFalse(tx.putIfAbsent("path", "b"))
             }
             assertEquals(
@@ -251,7 +251,7 @@ class DBTest {
                 db.get("path")
             )
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.put("path", "c")
             }
             assertEquals("value should have been udpated by regular put", "c", db.get("path"))
@@ -263,7 +263,7 @@ class DBTest {
     @Test
     fun testGetDetails() {
         buildDB().use { db ->
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.put("/detail", "detail")
                 tx.put("/index", "/detail")
             }
@@ -277,11 +277,11 @@ class DBTest {
         buildDB().use { db ->
             val query = "/path/%/thing"
             assertNull(db.findOne(query))
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.put("/path/1/thing", "1")
             }
             assertEquals("1", db.findOne(query))
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.put("/path/2/thing", "2")
             }
             try {
@@ -298,7 +298,7 @@ class DBTest {
         buildDB().use { db ->
             var theValue = "thevalue"
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.put("path", theValue)
             }
             db.subscribe(object : Subscriber<String>(
@@ -316,7 +316,7 @@ class DBTest {
             })
 
             theValue = "new value"
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.put("path", theValue)
             }
         }
@@ -379,15 +379,15 @@ class DBTest {
 
             db.unsubscribe("100")
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.put("path", currentValue)
             }
             currentValue = "new value"
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.put("path", currentValue)
             }
 
-            db.mutate { tx -> tx.delete("path") }
+            db.mutatePublishBlocking { tx -> tx.delete("path") }
             assertTrue(calledDelete)
         }
     }
@@ -395,7 +395,7 @@ class DBTest {
     @Test
     fun testSubscribePrefixNoInit() {
         buildDB().use { db ->
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.putAll(
                     mapOf(
                         "/path/1" to "1",
@@ -428,7 +428,7 @@ class DBTest {
                 }
             }, receiveInitial = false)
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.delete("/path/1")
                 tx.put("/path/3", "3")
             }
@@ -441,7 +441,7 @@ class DBTest {
     @Test
     fun testSubscribePrefixInit() {
         buildDB().use { db ->
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.putAll(
                     mapOf(
                         "/path/1" to "1",
@@ -470,7 +470,7 @@ class DBTest {
     @Test
     fun testSubscribeDetailsPrefixInit() {
         buildDB().use { db ->
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.putAll(
                     mapOf(
                         "/detail/1" to "1",
@@ -494,7 +494,7 @@ class DBTest {
                 }
             })
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.put("/detail/1", "11")
                 tx.put("/list/3", "/detail/3")
                 tx.put("/detail/3", "3")
@@ -508,7 +508,7 @@ class DBTest {
                 ) // since this detail doesn't link back to a path in the list, we shouldn't get notified about it
             }
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.delete("/detail/2") // should show up as a deletion of /list/2
                 tx.delete("/list/2")
             }
@@ -529,7 +529,7 @@ class DBTest {
     @Test
     fun testTail() {
         buildDB().use { db ->
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.putAll(
                     mapOf(
                         "/list/1" to "1",
@@ -550,32 +550,32 @@ class DBTest {
             }, count = 2)
             assertEquals(listOf("5", "1"), list)
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.put("/list/3", "3")
             }
             assertEquals(listOf("5", "3"), list)
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.put("/list/6", "6")
             }
             assertEquals(listOf("6", "5"), list)
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.delete("/list/6")
             }
             assertEquals(listOf("5", "3"), list)
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.delete("/list/5")
             }
             assertEquals(listOf("3", "1"), list)
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.delete("/list/3")
             }
             assertEquals(listOf("1"), list)
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.delete("/list/1")
             }
             assertEquals(emptyList<String>(), list)
@@ -585,7 +585,7 @@ class DBTest {
     @Test
     fun testTailDetails() {
         buildDB().use { db ->
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.putAll(
                     mapOf(
                         "/detail/1" to "1",
@@ -608,34 +608,34 @@ class DBTest {
             }, count = 2)
             assertEquals(listOf("5", "1"), list)
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.put("/list/3", "/detail/3")
                 tx.put("/detail/3", "3")
             }
             assertEquals(listOf("5", "3"), list)
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.put("/list/6", "/detail/6")
                 tx.put("/detail/6", "6")
             }
             assertEquals(listOf("6", "5"), list)
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.delete("/detail/6")
             }
             assertEquals(listOf("5", "3"), list)
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.delete("/list/5")
             }
             assertEquals(listOf("3", "1"), list)
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.delete("/list/3")
             }
             assertEquals(listOf("1"), list)
 
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.delete("/list/1")
             }
             assertEquals(emptyList<String>(), list)
@@ -645,12 +645,12 @@ class DBTest {
     @Test
     fun testDurability() {
         buildDB().use { db ->
-            db.mutate { tx ->
+            db.mutatePublishBlocking { tx ->
                 tx.putAll(mapOf("path1" to "value1", "path2" to "value2"))
             }
 
             try {
-                db.mutate { tx ->
+                db.mutatePublishBlocking { tx ->
                     tx.put("path3", "value3")
                     throw Exception("I failed")
                 }
@@ -775,14 +775,14 @@ class DBTest {
                 }
             }, false)
 
-            val result = db.mutate { tx ->
+            val result = db.mutatePublishBlocking { tx ->
                 tx.put("a", "a") // this should persist to the db
-                val c = db.mutate { nestedTx ->
+                val c = db.mutatePublishBlocking { nestedTx ->
                     try {
                         // None of the below should persist to the db
-                        db.mutate { subNestedTx ->
+                        db.mutatePublishBlocking { subNestedTx ->
                             subNestedTx.put("b", "b")
-                            db.mutate { subSubNestedTx ->
+                            db.mutatePublishBlocking { subSubNestedTx ->
                                 subSubNestedTx.put("f", "f")
                             }
                             throw Exception("I failed!")
