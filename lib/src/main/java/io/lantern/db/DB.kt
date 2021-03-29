@@ -37,6 +37,10 @@ abstract class RawSubscriber<T : Any>(
     // clean path prefixes in case they included an unnecessary trailing %
     internal val cleanedPathPrefixes = pathPrefixes.map { it.trimEnd('%') }
 
+    open fun onInitial(values: List<Entry<Raw<T>>>) {
+        values.forEach { onUpdate(it.path, it.value) }
+    }
+
     /**
      * Called when the value at the given path changes
      */
@@ -53,6 +57,11 @@ abstract class RawSubscriber<T : Any>(
  */
 abstract class Subscriber<T : Any>(id: String, vararg pathPrefixes: String) :
     RawSubscriber<T>(id, *pathPrefixes) {
+
+    override fun onInitial(values: List<Entry<Raw<T>>>) {
+        values.forEach { onUpdate(it.path, it.value.value) }
+    }
+
     override fun onUpdate(path: String, raw: Raw<T>) {
         onUpdate(path, raw.value)
     }
@@ -172,9 +181,7 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
             subscribers[pathPrefix] = subscribersForPrefix
 
             if (receiveInitial) {
-                listRaw<T>("${pathPrefix}%").forEach {
-                    subscriber.onUpdate(it.path, it.value)
-                }
+                subscriber.onInitial(listRaw<T>("${pathPrefix}%"))
             }
         }
     }

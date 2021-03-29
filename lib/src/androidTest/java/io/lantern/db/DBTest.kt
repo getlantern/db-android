@@ -296,7 +296,7 @@ class DBTest {
     @Test
     fun testSubscribeDirectLate() {
         buildDB().use { db ->
-            var theValue = "thevalue"
+            var theValue = "the value"
 
             db.mutatePublishBlocking { tx ->
                 tx.put("path", theValue)
@@ -306,9 +306,15 @@ class DBTest {
                 // note the use of a gratuitous trailing % which will be ignored
                 "path%"
             ) {
+                override fun onInitial(values: List<Entry<Raw<String>>>) {
+                    assertEquals(1, values.size)
+                    assertEquals("path", values[0].path)
+                    assertEquals("the value", values[0].value.value)
+                }
+
                 override fun onUpdate(path: String, value: String) {
                     assertEquals("path", path)
-                    assertEquals(theValue, value)
+                    assertEquals("new value", value)
                 }
 
                 override fun onDelete(path: String) {
