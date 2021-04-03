@@ -960,6 +960,7 @@ internal class DetailsSubscriber<T : Any>(
         }
     }
 
+    @Synchronized
     internal fun onUpdate(path: String, detailPath: String, value: Raw<T>) {
         if (!subscribersForDetails.contains(path)) {
             val subscriberForDetails = SubscriberForDetails(originalSubscriber, path, detailPath)
@@ -969,6 +970,7 @@ internal class DetailsSubscriber<T : Any>(
         originalSubscriber.onUpdate(path, value)
     }
 
+    @Synchronized
     override fun onDelete(path: String) {
         subscribersForDetails.remove(path)?.let { model.unsubscribe(it.id) }
         originalSubscriber.onDelete(path)
@@ -979,7 +981,7 @@ internal class SubscriberForDetails<T : Any>(
     private val originalSubscriber: RawSubscriber<T>,
     private val originalPath: String,
     detailPath: String
-) : RawSubscriber<T>("${originalSubscriber.id}/${detailPath}", detailPath) {
+) : RawSubscriber<T>("${originalSubscriber.id}/${originalPath}", detailPath) {
     override fun onUpdate(path: String, raw: Raw<T>) {
         originalSubscriber.onUpdate(originalPath, raw)
     }
