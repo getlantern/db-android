@@ -1,2 +1,2 @@
-include ':lib'
+include ':db'
 rootProject.name = "db-android"

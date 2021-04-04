@@ -12,13 +12,14 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.IOException
-import java.nio.file.*
-import java.nio.file.attribute.BasicFileAttributes
+import java.io.File
+import java.util.*
+import kotlin.collections.ArrayList
+import kotlin.collections.HashSet
 
 @RunWith(AndroidJUnit4::class)
 class DBTest {
-    private var tempDir: Path? = null
+    private var tempDir: File? = null
 
     @Test
     fun testQuery() {
@@ -814,10 +815,7 @@ class DBTest {
     private fun buildDB(): DB {
         val db = DB.createOrOpen(
             InstrumentationRegistry.getInstrumentation().targetContext,
-            filePath = Paths.get(
-                tempDir.toString(),
-                "testdb"
-            ).toString(),
+            filePath = File(tempDir, "testdb").toString(),
             password = "testpassword",
         )
         db.registerType(20, Message::class.java)
@@ -826,43 +824,16 @@ class DBTest {
 
     @Before
     fun setupTempDir() {
-        tempDir = Files.createTempDirectory("omtest")
+        tempDir = File(
+            InstrumentationRegistry.getInstrumentation().targetContext.cacheDir,
+            Random().nextLong().toString()
+        )
+        tempDir!!.mkdirs()
     }
 
     @After
     fun deleteTempDir() {
-        tempDir?.let {
-            Files.walkFileTree(tempDir, object : FileVisitor<Path> {
-                override fun preVisitDirectory(
-                    dir: Path?,
-                    attrs: BasicFileAttributes?
-                ): FileVisitResult {
-                    return FileVisitResult.CONTINUE
-                }
-
-                override fun visitFile(
-                    file: Path?,
-                    attrs: BasicFileAttributes?
-                ): FileVisitResult {
-                    Files.delete(file)
-                    return FileVisitResult.CONTINUE
-                }
-
-                override fun visitFileFailed(
-                    file: Path?,
-                    exc: IOException?
-                ): FileVisitResult {
-                    return FileVisitResult.CONTINUE
-                }
-
-                override fun postVisitDirectory(
-                    dir: Path?,
-                    exc: IOException?
-                ): FileVisitResult {
-                    return FileVisitResult.CONTINUE
-                }
-            })
-        }
+        tempDir?.deleteRecursively()
     }
 }
 
