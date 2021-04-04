@@ -104,6 +104,10 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
             secureDelete: Boolean = true,
             name: String = File(filePath).name
         ): DB {
+            // TODO: if the process crashes in the middle of creating the DB, the next time we start
+            // up we can get SQLiteException: file is not a database android. We should try to clean
+            // this up automatically, but be careful to not delete legitimate data in case it was
+            // corrupted in a different way.
             SQLiteDatabase.loadLibs(ctx)
             val db = SQLiteDatabase.openOrCreateDatabase(filePath, password, null)
             if (!db.enableWriteAheadLogging()) {
