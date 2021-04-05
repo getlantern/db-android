@@ -24,6 +24,16 @@ data class Entry<T>(val path: String, val value: T)
 
 data class Detail<T>(val path: String, val detailPath: String, val value: T)
 
+data class ChangeSet<T : Any>(
+    val updates: Map<String, T> = emptyMap(),
+    val deletions: Set<String> = emptySet()
+)
+
+data class RawChangeSet<T : Any>(
+    val updates: Map<String, Raw<T>> = emptyMap(),
+    val deletions: Set<String> = emptySet(),
+)
+
 /**
  * Subscriber for path update events.
  *
@@ -38,18 +48,13 @@ abstract class RawSubscriber<T : Any>(
     internal val cleanedPathPrefixes = pathPrefixes.map { it.trimEnd('%') }
 
     open fun onInitial(values: List<Entry<Raw<T>>>) {
-        values.forEach { onUpdate(it.path, it.value) }
+        onChanges(RawChangeSet(updates = values.map { it.path to it.value }.toMap()))
     }
 
     /**
-     * Called when the value at the given path changes
+     * Called when some values change
      */
-    abstract fun onUpdate(path: String, raw: Raw<T>)
-
-    /**
-     * Called when the value at the given path is deleted
-     */
-    abstract fun onDelete(path: String)
+    abstract fun onChanges(changes: RawChangeSet<T>)
 }
 
 /**
@@ -58,15 +63,16 @@ abstract class RawSubscriber<T : Any>(
 abstract class Subscriber<T : Any>(id: String, vararg pathPrefixes: String) :
     RawSubscriber<T>(id, *pathPrefixes) {
 
-    override fun onInitial(values: List<Entry<Raw<T>>>) {
-        values.forEach { onUpdate(it.path, it.value.value) }
+    override fun onChanges(changes: RawChangeSet<T>) {
+        onChanges(
+            ChangeSet(
+                updates = changes.updates.map { it.key to it.value.value }.toMap(),
+                deletions = changes.deletions
+            )
+        )
     }
 
-    override fun onUpdate(path: String, raw: Raw<T>) {
-        onUpdate(path, raw.value)
-    }
-
-    abstract fun onUpdate(path: String, value: T)
+    abstract fun onChanges(changes: ChangeSet<T>)
 }
 
 /**
@@ -115,9 +121,10 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
             }
             if (secureDelete) {
                 // Enable secure delete
-                val cursor = db.query("PRAGMA secure_delete;")
-                if (cursor == null || !cursor.moveToNext()) {
-                    throw RuntimeException("Unable to enable secure delete")
+                db.query("PRAGMA secure_delete;").use { cursor ->
+                    if (cursor == null || !cursor.moveToNext()) {
+                        throw RuntimeException("Unable to enable secure delete")
+                    }
                 }
             }
             // All data is stored in a single table that has a TEXT path, a BLOB value. The table is
@@ -224,147 +231,15 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
         doSubscribe(detailsSubscriber, receiveInitial = false)
         if (receiveInitial) {
             subscriber.cleanedPathPrefixes.forEach { pathPrefix ->
-                listDetailsRaw<T>("${pathPrefix}%").forEach {
-                    detailsSubscriber.onUpdate(it.path, it.detailPath, it.value)
-                }
+                val details = listDetailsRaw<T>("${pathPrefix}%")
+                detailsSubscriber.onChanges(RawChangeSet<String>(updates = details.map {
+                    it.path to Raw(
+                        serde,
+                        it.detailPath
+                    )
+                }.toMap()), details.map { it.detailPath to it.value }.toMap())
             }
         }
-    }
-
-    /***
-     * Tails the subscribed path (where the tail is the items with the highest sort order).
-     *
-     * The path supplied to onUpdate is the path of the most recently updated item in the list.
-     *
-     * Note - subscriber's onDelete will never be called, deletions just result in onUpdate being
-     * called with a smaller list.
-     *
-     * Note - this currently only works with subscribers with one path prefix
-     */
-    fun <T : Any> tail(
-        subscriber: Subscriber<List<Raw<T>>>,
-        count: Int = Integer.MAX_VALUE
-    ) {
-        if (subscriber.cleanedPathPrefixes.size != 1) {
-            throw AssertionError("tail only supports subscribers with 1 path prefix")
-        }
-        val actualSubscriber = object :
-            RawSubscriber<T>(subscriber.id, *subscriber.cleanedPathPrefixes.toTypedArray()) {
-            val items = TreeMap<String, Raw<T>>();
-
-            @Synchronized
-            override fun onUpdate(path: String, raw: Raw<T>) {
-                items[path] = raw
-                val numToRemove = items.size - count
-                if (numToRemove > 0) {
-                    val it = items.iterator()
-
-                    for (i in 1..numToRemove) {
-                        if (!it.hasNext()) {
-                            break;
-                        }
-                        it.next()
-                        it.remove()
-                    }
-                }
-                subscriber.onUpdate(path, items.descendingMap().values.toList())
-            }
-
-            @Synchronized
-            override fun onDelete(path: String) {
-                items.remove(path)
-                // back fill for removed items
-                listRaw<T>(
-                    "${subscriber.cleanedPathPrefixes[0]}%",
-                    reverseSort = true,
-                    start = items.size,
-                    count = 1,
-                ).forEach {
-                    items[it.path] = it.value
-                }
-                subscriber.onUpdate(path, items.descendingMap().values.toList())
-            }
-        }
-
-        txExecutor.submit(Callable<Unit> {
-            doSubscribe(actualSubscriber, false)
-            listRaw<T>(
-                "${subscriber.cleanedPathPrefixes[0]}%",
-                reverseSort = true,
-                count = count
-            ).forEach {
-                actualSubscriber.onUpdate(it.path, it.value)
-            }
-        }).get()
-    }
-
-    /**
-     * Tails the details corresponding to items at the subscribed path (where the tail is the items
-     * with the highest sort order). Detail resolution happens identically to #subscribeDetails.
-     *
-     * The path supplied to onUpdate is the path of the most recently updated item in the list.
-     *
-     * Note - subscriber's onDelete will never be called, deletions just result in onUpdate being
-     * called with a smaller list.
-     *
-     * Note - this currently only works with subscribers with one path prefix
-     */
-    fun <T : Any> tailDetails(
-        subscriber: Subscriber<List<Raw<T>>>,
-        count: Int = Integer.MAX_VALUE
-    ) {
-        if (subscriber.cleanedPathPrefixes.size != 1) {
-            throw AssertionError("tailDetails only supports subscribers with 1 path prefix")
-        }
-        val actualSubscriber =
-            object :
-                RawSubscriber<T>(subscriber.id, *subscriber.cleanedPathPrefixes.toTypedArray()) {
-                val items = TreeMap<String, Raw<T>>();
-
-                @Synchronized
-                override fun onUpdate(path: String, raw: Raw<T>) {
-                    items[path] = raw
-                    val numToRemove = items.size - count
-                    if (numToRemove > 0) {
-                        val it = items.iterator()
-
-                        for (i in 1..numToRemove) {
-                            if (!it.hasNext()) {
-                                break;
-                            }
-                            it.next()
-                            it.remove()
-                        }
-                    }
-                    subscriber.onUpdate(path, items.descendingMap().values.toList())
-                }
-
-                @Synchronized
-                override fun onDelete(path: String) {
-                    items.remove(path)
-                    // back fill for removed items
-                    listDetailsRaw<T>(
-                        "${subscriber.cleanedPathPrefixes[0]}%",
-                        reverseSort = true,
-                        start = items.size,
-                        count = 1,
-                    ).forEach {
-                        items[it.path] = it.value
-                    }
-                    subscriber.onUpdate(path, items.descendingMap().values.toList())
-                }
-            }
-
-        txExecutor.submit(Callable<Unit> {
-            doSubscribeDetails(actualSubscriber, false)
-            listDetailsRaw<T>(
-                "${subscriber.cleanedPathPrefixes[0]}%",
-                reverseSort = true,
-                count = count
-            ).forEach {
-                actualSubscriber.onUpdate(it.path, it.value)
-            }
-        }).get()
     }
 
     /**
@@ -462,10 +337,10 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
     fun <T> mutatePublishBlocking(fn: (tx: Transaction) -> T): T = mutate(true, fn)
 
     /**
-     * Returns a SharedPreferences backed by this model.
+     * Returns a SharedPreferences backed by this db.
      *
-     * @param prefix - preference keys are prefixed with this for storage in the model, for example if prefix="/prefs/" and the preference key is "mypref", it would be stored at "/prefs/mypref"
-     * @param fallback - an optional fallback SharedPreferences to use for values that aren't found in the model
+     * @param prefix - preference keys are prefixed with this for storage in the db, for example if prefix="/prefs/" and the preference key is "mypref", it would be stored at "/prefs/mypref"
+     * @param fallback - an optional fallback SharedPreferences to use for values that aren't found in the db
      */
     fun asSharedPreferences(
         prefix: String = "",
@@ -492,8 +367,7 @@ open class Queryable internal constructor(
      * Gets the value at the given path
      */
     fun <T : Any> get(path: String): T? {
-        val cursor = selectSingle(path)
-        cursor.use {
+        selectSingle(path).use { cursor ->
             if (cursor == null || !cursor.moveToNext()) {
                 return null
             }
@@ -505,8 +379,7 @@ open class Queryable internal constructor(
      * Gets the raw value at the given path
      */
     fun <T : Any> getRaw(path: String): Raw<T>? {
-        val cursor = selectSingle(path)
-        cursor.use {
+        selectSingle(path).use { cursor ->
             if (cursor == null || !cursor.moveToNext()) {
                 return null
             }
@@ -515,14 +388,13 @@ open class Queryable internal constructor(
     }
 
     /**
-     * Indicates whether the model contains a value at the given path
+     * Indicates whether the db contains a value at the given path
      */
     fun contains(path: String): Boolean {
-        val cursor = db.rawQuery(
+        db.rawQuery(
             "SELECT COUNT(path) FROM data WHERE path = ?",
             arrayOf(serde.serialize(path))
-        )
-        cursor.use {
+        ).use { cursor ->
             return cursor != null && cursor.moveToNext() && cursor.getInt(0) > 0
         }
     }
@@ -539,11 +411,10 @@ open class Queryable internal constructor(
      * points to. Same logic as #listDetails.
      */
     fun <T : Any> getDetail(path: String): T? {
-        val cursor = db.rawQuery(
+        db.rawQuery(
             "SELECT d.value FROM data l INNER JOIN data d ON l.value = d.path WHERE l.path = ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T'",
             arrayOf(serde.serialize(path))
-        )
-        cursor.use {
+        ).use { cursor ->
             if (cursor == null || !cursor.moveToNext()) {
                 return null
             }
@@ -563,11 +434,10 @@ open class Queryable internal constructor(
      */
     @Throws(TooManyMatchesException::class)
     fun <T : Any> findOne(pathQuery: String): T? {
-        val cursor = db.rawQuery(
+        db.rawQuery(
             "SELECT value FROM data WHERE path LIKE(?)",
             arrayOf(serde.serialize(pathQuery))
-        )
-        cursor.use {
+        ).use { cursor ->
             if (cursor == null || !cursor.moveToNext()) {
                 return null
             }
@@ -846,11 +716,12 @@ class Transaction internal constructor(
         var rowId: Long? = null
         if (fullText != null) {
             db.execSQL("INSERT INTO counters(id, value) VALUES(0, 0) ON CONFLICT(id) DO UPDATE SET value = value+1")
-            val cursor = db.rawQuery("SELECT value FROM counters WHERE id = 0", null)
-            if (cursor == null || !cursor.moveToNext()) {
-                throw RuntimeException("Unable to read counter value for full text indexing")
+            db.rawQuery("SELECT value FROM counters WHERE id = 0", null).use { cursor ->
+                if (cursor == null || !cursor.moveToNext()) {
+                    throw RuntimeException("Unable to read counter value for full text indexing")
+                }
+                rowId = cursor.getLong(0)
             }
-            rowId = cursor.getLong(0)
         }
         db.execSQL(
             "INSERT INTO data(path, value, rowid) VALUES(?, ?, ?)${onConflictClause}",
@@ -867,7 +738,7 @@ class Transaction internal constructor(
     }
 
     /**
-     * Puts all path/value pairs into the model
+     * Puts all path/value pairs into the db
      */
     fun putAll(map: Map<String, Any?>) {
         map.forEach { (path, value) -> put(path, value) }
@@ -879,10 +750,9 @@ class Transaction internal constructor(
     fun <T : Any> delete(path: String, extractFullText: ((T) -> String)? = null) {
         val serializedPath = serde.serialize(path)
         extractFullText?.let {
-            val cursor = db.rawQuery(
+            db.rawQuery(
                 "SELECT rowid, value FROM data WHERE path = ?", arrayOf(serializedPath)
-            )
-            cursor.use {
+            ).use { cursor ->
                 if (cursor != null && cursor.moveToNext()) {
                     db.execSQL(
                         "INSERT INTO fts(fts, rowid, value) VALUES('delete', ?, ?)",
@@ -904,6 +774,8 @@ class Transaction internal constructor(
     }
 
     internal fun publish() {
+        val changesBySubscriber = HashMap<RawSubscriber<Any>, RawChangeSet<Any>>()
+
         updates.forEach { (path, newValue) ->
             subscribers.visit(object :
                 RadixTreeVisitor<PersistentMap<String, RawSubscriber<Any>>, Void?> {
@@ -914,7 +786,14 @@ class Transaction internal constructor(
                     if (key == null || !path.startsWith(key)) {
                         return false
                     }
-                    value?.values?.forEach { it.onUpdate(path, newValue) }
+                    value?.values?.forEach {
+                        var changes = changesBySubscriber[it]
+                        if (changes == null) {
+                            changes = RawChangeSet(updates = HashMap(), deletions = HashSet())
+                            changesBySubscriber[it] = changes
+                        }
+                        (changes.updates as MutableMap)[path] = newValue
+                    }
                     return true
                 }
 
@@ -934,7 +813,14 @@ class Transaction internal constructor(
                     if (key == null || !path.startsWith(key)) {
                         return false
                     }
-                    value?.values?.forEach { it.onDelete(path) }
+                    value?.values?.forEach {
+                        var changes = changesBySubscriber[it]
+                        if (changes == null) {
+                            changes = RawChangeSet(updates = HashMap(), deletions = HashSet())
+                            changesBySubscriber[it] = changes!!
+                        }
+                        (changes!!.deletions as MutableSet).add(path)
+                    }
                     return true
                 }
 
@@ -943,11 +829,15 @@ class Transaction internal constructor(
                 }
             })
         }
+
+        changesBySubscriber.forEach { (subscriber, changes) ->
+            subscriber.onChanges(changes)
+        }
     }
 }
 
 internal class DetailsSubscriber<T : Any>(
-    private val model: DB,
+    private val db: DB,
     private val originalSubscriber: RawSubscriber<T>
 ) : RawSubscriber<String>(
     originalSubscriber.id,
@@ -955,29 +845,39 @@ internal class DetailsSubscriber<T : Any>(
 ) {
     internal val subscribersForDetails = ConcurrentHashMap<String, RawSubscriber<T>>()
 
-    @Synchronized
-    override fun onUpdate(path: String, raw: Raw<String>) {
-        val detailPath = raw.value
-        val newValue = model.getRaw<T>(detailPath)
-        if (newValue != null) {
-            onUpdate(path, detailPath, newValue)
-        }
+    override fun onChanges(changes: RawChangeSet<String>) {
+        onChanges(changes,
+            changes.updates.values.map { detailPath ->
+                detailPath.value to db.getRaw<T>(
+                    detailPath.value
+                )
+            }
+                .toMap()
+        )
     }
 
     @Synchronized
-    internal fun onUpdate(path: String, detailPath: String, value: Raw<T>) {
-        if (!subscribersForDetails.contains(path)) {
-            val subscriberForDetails = SubscriberForDetails(originalSubscriber, path, detailPath)
-            subscribersForDetails[path] = subscriberForDetails
-            model.doSubscribe(subscriberForDetails)
+    internal fun onChanges(changes: RawChangeSet<String>, details: Map<String, Raw<T>?>) {
+        // register subscribers for details
+        changes.updates.forEach { (path, detailPath) ->
+            if (!subscribersForDetails.contains(path)) {
+                val subscriberForDetails =
+                    SubscriberForDetails(originalSubscriber, path, detailPath.value)
+                subscribersForDetails[path] = subscriberForDetails
+                db.doSubscribe(subscriberForDetails)
+            }
         }
-        originalSubscriber.onUpdate(path, value)
-    }
 
-    @Synchronized
-    override fun onDelete(path: String) {
-        subscribersForDetails.remove(path)?.let { model.unsubscribe(it.id) }
-        originalSubscriber.onDelete(path)
+        // unregister subscribers for details
+        changes.deletions.forEach { path ->
+            subscribersForDetails.remove(path)?.let { db.unsubscribe(it.id) }
+        }
+
+        val updates =
+            changes.updates.map { (path, detailPath) -> path to details[detailPath.value] }
+                .filter { (path, value) -> value != null }.map { (path, value) -> path to value!! }
+                .toMap()
+        originalSubscriber.onChanges(RawChangeSet(updates = updates, deletions = changes.deletions))
     }
 }
 
@@ -986,12 +886,10 @@ internal class SubscriberForDetails<T : Any>(
     private val originalPath: String,
     detailPath: String
 ) : RawSubscriber<T>("${originalSubscriber.id}/${originalPath}", detailPath) {
-    override fun onUpdate(path: String, raw: Raw<T>) {
-        originalSubscriber.onUpdate(originalPath, raw)
-    }
-
-    override fun onDelete(path: String) {
-        originalSubscriber.onDelete(originalPath)
+    override fun onChanges(changes: RawChangeSet<T>) {
+        originalSubscriber.onChanges(RawChangeSet(updates = changes.updates.map { (path, value) -> originalPath to value }
+            .toMap(),
+            deletions = changes.deletions.map { path -> originalPath }.toSet()))
     }
 }
 
