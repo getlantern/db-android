@@ -12,10 +12,7 @@ import net.sqlcipher.database.SQLiteDatabase
 import java.io.Closeable
 import java.io.File
 import java.util.*
-import java.util.concurrent.Callable
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.collections.ArrayList
 import kotlin.collections.HashMap
@@ -47,7 +44,7 @@ abstract class RawSubscriber<T : Any>(
     // clean path prefixes in case they included an unnecessary trailing %
     internal val cleanedPathPrefixes = pathPrefixes.map { it.trimEnd('%') }
 
-    open fun onInitial(values: List<Entry<Raw<T>>>) {
+    internal open fun onInitial(values: List<Entry<Raw<T>>>) {
         onChanges(RawChangeSet(updates = values.map { it.path to it.value }.toMap()))
     }
 
@@ -167,9 +164,9 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
         subscriber: RawSubscriber<T>,
         receiveInitial: Boolean = true
     ) {
-        txExecutor.submit(Callable<Unit> {
+        txExecute(Callable<Unit> {
             doSubscribe(subscriber, receiveInitial)
-        }).get()
+        })
     }
 
     internal fun <T : Any> doSubscribe(
@@ -218,9 +215,9 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
         subscriber: RawSubscriber<T>,
         receiveInitial: Boolean = true
     ) {
-        txExecutor.submit(Callable<Unit> {
+        txExecute(Callable<Unit> {
             doSubscribeDetails(subscriber, receiveInitial)
-        }).get()
+        })
     }
 
     private fun <T : Any> doSubscribeDetails(
@@ -324,13 +321,17 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
                     currentTransaction.remove()
                 }
             })
-            val result = future.get()
-            // publish outside of the txExecutor
-            val publishResult = publishExecutor.submit { tx.publish() }
-            if (publishBlocking) {
-                publishResult.get()
+            try {
+                val result = future.get()
+                // publish outside of the txExecutor
+                val publishResult = publishExecutor.submit { tx.publish() }
+                if (publishBlocking) {
+                    publishResult.get()
+                }
+                return result
+            } catch (e: ExecutionException) {
+                throw e.cause ?: e
             }
-            return result
         }
     }
 
@@ -347,6 +348,14 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
         fallback: SharedPreferences? = null
     ): SharedPreferences {
         return SharedPreferencesAdapter(this, prefix, fallback)
+    }
+
+    private fun <T> txExecute(cmd: Callable<T>): T {
+        try {
+            return txExecutor.submit(cmd).get()
+        } catch (e: ExecutionException) {
+            throw e.cause ?: e
+        }
     }
 
     @Synchronized

@@ -343,8 +343,8 @@ class DBTest {
                     override fun onChanges(changes: ChangeSet<String>) {}
                 })
                 fail("re-registering already registered subscriber ID should not be allowed")
-            } catch (t: Throwable) {
-                assertTrue(t.cause is IllegalArgumentException)
+            } catch (t: IllegalArgumentException) {
+                // expected
             }
 
             db.unsubscribe("100")
@@ -525,9 +525,9 @@ class DBTest {
             try {
                 db.mutatePublishBlocking { tx ->
                     tx.put("path3", "value3")
-                    throw Exception("I failed")
+                    throw IllegalArgumentException("I failed")
                 }
-            } catch (_: Throwable) {
+            } catch (_: IllegalArgumentException) {
                 // ignore exception
             }
         }
@@ -619,18 +619,20 @@ class DBTest {
 
             prefs.edit().putString("string", "My String").putInt("int", 5).commit()
             assertEquals(mapOf("string" to "My String", "int" to 5), prefs.all)
+            Thread.sleep(500)
             assertEquals(setOf("string", "int"), updatedKeys)
 
             updatedKeys.clear()
             prefs.edit().clear().commit()
             assertEquals(0, prefs.all.size)
+            Thread.sleep(500)
             assertEquals(setOf("string", "int"), updatedKeys)
 
             updatedKeys.clear()
             prefs.unregisterOnSharedPreferenceChangeListener(listener)
             prefs.edit().putString("newstring", "My New String").commit()
             // wait a little bit for updates
-            Thread.sleep(1000)
+            Thread.sleep(500)
             assertEquals(0, updatedKeys.size)
         }
     }
@@ -658,9 +660,9 @@ class DBTest {
                             db.mutatePublishBlocking { subSubNestedTx ->
                                 subSubNestedTx.put("f", "f")
                             }
-                            throw Exception("I failed!")
+                            throw IllegalArgumentException("I failed!")
                         }
-                    } catch (t: Throwable) {
+                    } catch (t: IllegalArgumentException) {
                         // ignore
                     }
                     nestedTx.put("c", "c")
