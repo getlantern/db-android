@@ -228,13 +228,15 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
         doSubscribe(detailsSubscriber, receiveInitial = false)
         if (receiveInitial) {
             subscriber.cleanedPathPrefixes.forEach { pathPrefix ->
-                val details = listDetailsRaw<T>("${pathPrefix}%")
-                detailsSubscriber.onChanges(RawChangeSet<String>(updates = details.map {
-                    it.path to Raw(
-                        serde,
-                        it.detailPath
-                    )
-                }.toMap()), details.map { it.detailPath to it.value }.toMap())
+                val list = listDetailsRaw<T>("${pathPrefix}%")
+                val updates = HashMap<String, Raw<Any>>()
+                list.forEach { detail ->
+                    // this is the mapping of original path to detail path
+                    updates[detail.path] = Raw(serde, detail.detailPath)
+                    // this is the actual detail
+                    updates[detail.detailPath] = detail.value as Raw<Any>
+                }
+                detailsSubscriber.onChanges(RawChangeSet<Any>(updates = updates))
             }
         }
     }
@@ -252,13 +254,6 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
                     subscribers.remove(pathPrefix)
                 } else {
                     subscribers[pathPrefix] = subscribersForPrefix
-                }
-            }
-            when (subscriber) {
-                is DetailsSubscriber<*> -> subscriber.subscribersForDetails.values.forEach {
-                    unsubscribe(
-                        it.id
-                    )
                 }
             }
         })
@@ -848,57 +843,80 @@ class Transaction internal constructor(
 internal class DetailsSubscriber<T : Any>(
     private val db: DB,
     private val originalSubscriber: RawSubscriber<T>
-) : RawSubscriber<String>(
+) : RawSubscriber<Any>(
     originalSubscriber.id,
-    *originalSubscriber.cleanedPathPrefixes.toTypedArray()
+    "%"
 ) {
-    internal val subscribersForDetails = ConcurrentHashMap<String, RawSubscriber<T>>()
+    internal val subscribedPaths = RadixTree<Boolean>()
+    internal val subscribedDetailPathsToOriginalPaths = HashMap<String, String>()
+    internal val subscribedOriginalPathsToDetailPaths = HashMap<String, String>()
 
-    override fun onChanges(changes: RawChangeSet<String>) {
-        onChanges(changes,
-            changes.updates.values.map { detailPath ->
-                detailPath.value to db.getRaw<T>(
-                    detailPath.value
-                )
-            }
-                .toMap()
-        )
+    init {
+        originalSubscriber.cleanedPathPrefixes.forEach { path -> subscribedPaths.put(path, true) }
     }
 
-    @Synchronized
-    internal fun onChanges(changes: RawChangeSet<String>, details: Map<String, Raw<T>?>) {
-        // register subscribers for details
-        changes.updates.forEach { (path, detailPath) ->
-            if (!subscribersForDetails.contains(path)) {
-                val subscriberForDetails =
-                    SubscriberForDetails(originalSubscriber, path, detailPath.value)
-                subscribersForDetails[path] = subscriberForDetails
-                db.doSubscribe(subscriberForDetails)
-            }
-        }
-
-        // unregister subscribers for details
+    override fun onChanges(changes: RawChangeSet<Any>) {
+        // process deletions first
+        val deletions = HashSet<String>()
         changes.deletions.forEach { path ->
-            subscribersForDetails.remove(path)?.let { db.unsubscribe(it.id) }
+            subscribedDetailPathsToOriginalPaths.remove(path)
+                ?.let { originalPath -> deletions.add(originalPath) }
+            subscribedPaths.visit(object :
+                RadixTreeVisitor<Boolean, Void?> {
+                override fun visit(key: String?, value: Boolean?): Boolean {
+                    if (key == null || !path.startsWith(key)) {
+                        return false
+                    }
+                    deletions.add(path)
+                    subscribedOriginalPathsToDetailPaths.remove(path)
+                        ?.let { subscribedDetailPathsToOriginalPaths.remove(it) }
+                    return true
+                }
+
+                override fun getResult(): Void? {
+                    return null
+                }
+            })
         }
 
-        val updates =
-            changes.updates.map { (path, detailPath) -> path to details[detailPath.value] }
-                .filter { (path, value) -> value != null }.map { (path, value) -> path to value!! }
-                .toMap()
-        originalSubscriber.onChanges(RawChangeSet(updates = updates, deletions = changes.deletions))
+        // then update our detail subscription paths
+        val updatedPaths = HashMap<String, String>()
+        changes.updates.forEach { (path, value) ->
+            subscribedPaths.visit(object :
+                RadixTreeVisitor<Boolean, Void?> {
+                override fun visit(key: String?, v: Boolean?): Boolean {
+                    if (key == null || !path.startsWith(key)) {
+                        return false
+                    }
+                    val detailPath = value.value as String
+                    subscribedOriginalPathsToDetailPaths[path] = detailPath
+                    subscribedDetailPathsToOriginalPaths[detailPath] = path
+                    updatedPaths[path] = detailPath
+                    return true
+                }
+
+                override fun getResult(): Void? {
+                    return null
+                }
+            })
+        }
+
+        // then capture updates to details
+        val updates = HashMap<String, Raw<T>>()
+        changes.updates.forEach { (path, value) ->
+            subscribedDetailPathsToOriginalPaths[path]
+                ?.let { originalPath ->
+                    updates[originalPath] = value as Raw<T>
+                    updatedPaths.remove(originalPath)
+                }
+        }
+
+        // lastly capture values for any updated paths that didn't get an update from the corresponding detail path
+        updatedPaths.forEach { (path, detailPath) ->
+            db.getRaw<T>(detailPath)?.let { updates[path] = it }
+        }
+
+        // now notify original subscriber
+        originalSubscriber.onChanges(RawChangeSet(updates = updates, deletions = deletions))
     }
 }
-
-internal class SubscriberForDetails<T : Any>(
-    private val originalSubscriber: RawSubscriber<T>,
-    private val originalPath: String,
-    detailPath: String
-) : RawSubscriber<T>("${originalSubscriber.id}/${originalPath}", detailPath) {
-    override fun onChanges(changes: RawChangeSet<T>) {
-        originalSubscriber.onChanges(RawChangeSet(updates = changes.updates.map { (path, value) -> originalPath to value }
-            .toMap(),
-            deletions = changes.deletions.map { path -> originalPath }.toSet()))
-    }
-}
-

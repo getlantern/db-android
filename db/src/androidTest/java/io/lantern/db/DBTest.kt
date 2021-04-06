@@ -516,6 +516,51 @@ class DBTest {
     }
 
     @Test
+    fun testSubscribeDetailsWithCompoundChanges() {
+        buildDB().use { db ->
+            val updates = ArrayList<Entry<String>>()
+            val deletions = ArrayList<String>()
+
+            db.subscribeDetails(object : Subscriber<String>("100", "/list/") {
+                override fun onChanges(changes: ChangeSet<String>) {
+                    changes.updates.forEach { (path, value) ->
+                        updates.add(Entry(path, value))
+                    }
+
+                    changes.deletions.forEach { path -> deletions.add(path) }
+                }
+            }, receiveInitial = false)
+
+            db.mutatePublishBlocking { tx ->
+                tx.putAll(
+                    mapOf(
+                        "/detail" to "1",
+                        "/list/1" to "/detail"
+                    )
+                )
+            }
+
+            db.mutatePublishBlocking { tx ->
+                tx.put("/list/2", "/fake")
+                tx.put("/fake", "0")
+                tx.put("/detail", "2")
+                tx.put("/list/2", "/detail")
+                tx.delete("/list/1")
+                tx.put("/detail", "3")
+            }
+
+            assertEquals(
+                listOf(
+                    Entry("/list/1", "1"),
+                    Entry("/list/2", "3"),
+                ), updates
+            )
+
+            assertEquals(listOf("/list/1"), deletions)
+        }
+    }
+
+    @Test
     fun testDurability() {
         buildDB().use { db ->
             db.mutatePublishBlocking { tx ->
