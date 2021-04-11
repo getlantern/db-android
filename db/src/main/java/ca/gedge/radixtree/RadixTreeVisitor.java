@@ -38,12 +38,12 @@ public interface RadixTreeVisitor<V, R> {
 	 *
 	 * @return true if iteration is allowed to continue, false otherwise
 	 */
-	public abstract boolean visit(String key, V value);
+    boolean visit(String key, V value);
 	
 	/**
 	 * An overall result from the traversal of the radix tree.
 	 * 
 	 * @return the result
 	 */
-	public abstract R getResult();
+    R getResult();
 }

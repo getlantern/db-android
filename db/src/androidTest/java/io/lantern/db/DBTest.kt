@@ -279,6 +279,7 @@ class DBTest {
                 tx.put("/path/1/thing", "1")
             }
             assertEquals("1", db.findOne(query))
+            assertEquals("/path/1/thing", db.findOneRaw<String>(query)?.path)
             db.mutatePublishBlocking { tx ->
                 tx.put("/path/2/thing", "2")
             }

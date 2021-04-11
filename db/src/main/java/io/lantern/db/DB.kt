@@ -438,18 +438,27 @@ open class Queryable internal constructor(
      */
     @Throws(TooManyMatchesException::class)
     fun <T : Any> findOne(pathQuery: String): T? {
+        return findOneRaw<T>(pathQuery)?.let { it.value.value }
+    }
+
+    /**
+     * Like findOne, but returning the raw value and path
+     */
+    @Throws(TooManyMatchesException::class)
+    fun <T : Any> findOneRaw(pathQuery: String): Entry<Raw<T>>? {
         db.rawQuery(
-            "SELECT value FROM data WHERE path LIKE(?)",
+            "SELECT path, value FROM data WHERE path LIKE(?)",
             arrayOf(serde.serialize(pathQuery))
         ).use { cursor ->
             if (cursor == null || !cursor.moveToNext()) {
                 return null
             }
-            val serialized = cursor.getBlob(0)
+            val path = cursor.getBlob(0)
+            val value = cursor.getBlob(1)
             if (cursor.moveToNext()) {
                 throw TooManyMatchesException()
             }
-            return serde.deserialize(serialized)
+            return Entry(serde.deserialize(path), Raw(serde, value))
         }
     }
 

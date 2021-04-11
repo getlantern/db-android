@@ -170,6 +170,6 @@ class RadixTreeNode<V> implements Iterable<RadixTreeNode<V>>, Comparable<RadixTr
 
 	@Override
 	public int compareTo(RadixTreeNode<V> node) {
-		return prefix.toString().compareTo(node.getPrefix().toString());
+		return prefix.compareTo(node.getPrefix());
 	}
 }
