@@ -693,17 +693,20 @@ class Transaction internal constructor(
      * an existing value at this path, it's replaced.
      *
      * If fullText is populated, the given data will also be full text indexed.
+     *
+     * @return the value that was put
      */
-    fun put(path: String, value: Any?, fullText: String? = null) {
+    fun <T : Any> put(path: String, value: T?, fullText: String? = null): T? {
         value?.let {
             doPut(path, value, fullText, true)
         } ?: run {
             delete(path)
         }
+        return value
     }
 
     /**
-     * Puts the given value at the given path if and only if there was no value already prsent.
+     * Puts the given value at the given path if and only if there was no value already present.
      *
      * @return true if the value was successfully put, false if it wasn't because there was already a value
      */

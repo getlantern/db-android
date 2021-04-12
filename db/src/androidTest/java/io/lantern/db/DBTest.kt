@@ -249,9 +249,10 @@ class DBTest {
                 db.get("path")
             )
 
-            db.mutatePublishBlocking { tx ->
+            val putValue = db.mutatePublishBlocking { tx ->
                 tx.put("path", "c")
             }
+            assertEquals("put should have returned correct value", "c", putValue)
             assertEquals("value should have been udpated by regular put", "c", db.get("path"))
 
             assertEquals(arrayListOf("a", "c"), updates)
