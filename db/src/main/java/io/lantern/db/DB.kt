@@ -696,7 +696,7 @@ class Transaction internal constructor(
      *
      * @return the value that was put
      */
-    fun <T : Any> put(path: String, value: T?, fullText: String? = null): T? {
+    fun <T : Any?> put(path: String, value: T, fullText: String? = null): T {
         value?.let {
             doPut(path, value, fullText, true)
         } ?: run {
