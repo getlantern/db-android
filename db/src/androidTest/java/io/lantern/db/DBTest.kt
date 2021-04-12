@@ -48,18 +48,18 @@ class DBTest {
 
             assertEquals(
                 arrayListOf(
-                    Entry("/messages/a", "Message A"),
-                    Entry("/messages/b", "Message B"),
-                    Entry("/messages/c", "Message C"),
-                    Entry("/messages/d", "Message D")
+                    PathAndValue("/messages/a", "Message A"),
+                    PathAndValue("/messages/b", "Message B"),
+                    PathAndValue("/messages/c", "Message C"),
+                    PathAndValue("/messages/d", "Message D")
                 ), db.list<String>("/messages/%")
             )
             assertEquals(
                 arrayListOf(
-                    Entry("/messages/a", Raw(db.serde, "Message A")),
-                    Entry("/messages/b", Raw(db.serde, "Message B")),
-                    Entry("/messages/c", Raw(db.serde, "Message C")),
-                    Entry("/messages/d", Raw(db.serde, "Message D"))
+                    PathAndValue("/messages/a", Raw(db.serde, "Message A")),
+                    PathAndValue("/messages/b", Raw(db.serde, "Message B")),
+                    PathAndValue("/messages/c", Raw(db.serde, "Message C")),
+                    PathAndValue("/messages/d", Raw(db.serde, "Message D"))
                 ), db.listRaw<String>("/messages/%")
             )
 
@@ -183,18 +183,18 @@ class DBTest {
 
             assertEquals(
                 arrayListOf(
-                    Entry("/messages/a", Message("Message A blah")),
-                    Entry("/messages/b", Message("Message B")),
-                    Entry("/messages/c", Message("Message C blah blah")),
-                    Entry("/messages/d", Message("Message D blah blah blah"))
+                    PathAndValue("/messages/a", Message("Message A blah")),
+                    PathAndValue("/messages/b", Message("Message B")),
+                    PathAndValue("/messages/c", Message("Message C blah blah")),
+                    PathAndValue("/messages/d", Message("Message D blah blah blah"))
                 ), db.list<String>("/messages/%")
             )
 
             assertEquals(
                 arrayListOf(
-                    Entry("/messages/d", Message("Message D blah blah blah")),
-                    Entry("/messages/c", Message("Message C blah blah")),
-                    Entry("/messages/a", Message("Message A blah"))
+                    PathAndValue("/messages/d", Message("Message D blah blah blah")),
+                    PathAndValue("/messages/c", Message("Message C blah blah")),
+                    PathAndValue("/messages/a", Message("Message A blah"))
                 ), db.list<String>("/%", fullTextSearch = "blah")
             )
 
@@ -218,7 +218,7 @@ class DBTest {
 
             assertEquals(
                 arrayListOf(
-                    Entry("/messages/a", Message("Message A blah"))
+                    PathAndValue("/messages/a", Message("Message A blah"))
                 ), db.list<String>("/%", fullTextSearch = "blah")
             )
 
@@ -322,7 +322,7 @@ class DBTest {
                 // note the use of a gratuitous trailing % which will be ignored
                 "path%"
             ) {
-                override fun onInitial(values: List<Entry<Raw<String>>>) {
+                override fun onInitial(values: List<PathAndValue<Raw<String>>>) {
                     assertEquals(1, values.size)
                     assertEquals("path", values[0].path)
                     assertEquals("the value", values[0].value.value)
@@ -488,13 +488,13 @@ class DBTest {
                 )
             }
 
-            val updates = HashSet<Entry<String>>()
+            val updates = HashSet<PathAndValue<PathAndValue<String>>>()
             val deletions = HashSet<String>()
 
-            db.subscribeDetails(object : Subscriber<String>("100", "/list/") {
-                override fun onChanges(changes: ChangeSet<String>) {
+            db.subscribe(object : DetailsSubscriber<String>("100", "/list/") {
+                override fun onChanges(changes: DetailsChangeSet<String>) {
                     changes.updates.forEach { (path, value) ->
-                        updates.add(Entry(path, value))
+                        updates.add(PathAndValue(path, PathAndValue(value.path, value.value.value)))
                     }
 
                     changes.deletions.forEach { path -> deletions.add(path) }
@@ -522,10 +522,10 @@ class DBTest {
 
             assertEquals(
                 setOf(
-                    Entry("/list/1", "2"),
-                    Entry("/list/2", "11"),
-                    Entry("/list/2", "1"),
-                    Entry("/list/3", "3"),
+                    PathAndValue("/list/1", PathAndValue("/detail/2", "2")),
+                    PathAndValue("/list/2", PathAndValue("/detail/1", "1")),
+                    PathAndValue("/list/2", PathAndValue("/detail/1", "11")),
+                    PathAndValue("/list/3", PathAndValue("/detail/3", "3")),
                 ), updates
             )
 
@@ -536,13 +536,13 @@ class DBTest {
     @Test
     fun testSubscribeDetailsWithCompoundChanges() {
         buildDB().use { db ->
-            val updates = ArrayList<Entry<String>>()
+            val updates = ArrayList<PathAndValue<PathAndValue<String>>>()
             val deletions = ArrayList<String>()
 
-            db.subscribeDetails(object : Subscriber<String>("100", "/list/") {
-                override fun onChanges(changes: ChangeSet<String>) {
+            db.subscribe(object : DetailsSubscriber<String>("100", "/list/") {
+                override fun onChanges(changes: DetailsChangeSet<String>) {
                     changes.updates.forEach { (path, value) ->
-                        updates.add(Entry(path, value))
+                        updates.add(PathAndValue(path, PathAndValue(value.path, value.value.value)))
                     }
 
                     changes.deletions.forEach { path -> deletions.add(path) }
@@ -569,8 +569,8 @@ class DBTest {
 
             assertEquals(
                 listOf(
-                    Entry("/list/1", "1"),
-                    Entry("/list/2", "3"),
+                    PathAndValue("/list/1", PathAndValue("/detail", "1")),
+                    PathAndValue("/list/2", PathAndValue("/detail", "3")),
                 ), updates
             )
 

@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.collections.ArrayList
 import kotlin.collections.HashMap
 
-data class Entry<T>(val path: String, val value: T)
+data class PathAndValue<T>(val path: String, val value: T)
 
 data class Detail<T>(val path: String, val detailPath: String, val value: T)
 
@@ -28,6 +28,18 @@ data class ChangeSet<T : Any>(
 
 data class RawChangeSet<T : Any>(
     val updates: Map<String, Raw<T>> = emptyMap(),
+    val deletions: Set<String> = emptySet(),
+)
+
+data class DetailsChangeSet<T : Any>(
+    /**
+     * Any updated paths, keyed to the subscribed path.
+     */
+    val updates: Map<String, PathAndValue<Raw<T>>> = emptyMap(),
+
+    /**
+     * Any deleted paths.
+     */
     val deletions: Set<String> = emptySet(),
 )
 
@@ -44,7 +56,7 @@ abstract class RawSubscriber<T : Any>(
     // clean path prefixes in case they included an unnecessary trailing %
     internal val cleanedPathPrefixes = pathPrefixes.map { it.trimEnd('%') }
 
-    internal open fun onInitial(values: List<Entry<Raw<T>>>) {
+    internal open fun onInitial(values: List<PathAndValue<Raw<T>>>) {
         onChanges(RawChangeSet(updates = values.map { it.path to it.value }.toMap()))
     }
 
@@ -70,6 +82,109 @@ abstract class Subscriber<T : Any>(id: String, vararg pathPrefixes: String) :
     }
 
     abstract fun onChanges(changes: ChangeSet<T>)
+}
+
+/**
+ * A subscriber for updates to details for the paths matching its pathPrefix.
+ *
+ * The values corresponding to paths matching the pathPrefix are themselves treated as paths
+ * with which to look up the details.
+ *
+ * For example, given the following data:
+ *
+ * {"/detail/1": "one",
+ *  "/detail/2": "two",
+ *  "/list/1": "/detail/2",
+ *  "/list/2": "/detail/1"}
+ *
+ * A details subscription to prefix "/list/" would include ["one", "two"]. It would be notified
+ * if the paths /detail/1 or /detail/2 change, or if a new item is added to /list/ or an item
+ * is deleted from /list/.
+ */
+abstract class DetailsSubscriber<T : Any>(
+    id: String,
+    private vararg val pathPrefixes: String
+) : RawSubscriber<Any>(
+    id,
+    "%"
+) {
+    internal lateinit var db: DB
+    private val subscribedPaths = RadixTree<Boolean>()
+    internal val subscribedDetailPathsToOriginalPaths = HashMap<String, String>()
+    internal val subscribedOriginalPathsToDetailPaths = HashMap<String, String>()
+
+    init {
+        pathPrefixes.map {
+            it.trimEnd('%')
+        }.forEach { path -> subscribedPaths.put(path, true) }
+    }
+
+    abstract fun onChanges(changes: DetailsChangeSet<T>)
+
+    override fun onChanges(changes: RawChangeSet<Any>) {
+        // process deletions first
+        val deletions = HashSet<String>()
+        changes.deletions.forEach { path ->
+            subscribedDetailPathsToOriginalPaths.remove(path)
+                ?.let { originalPath -> deletions.add(originalPath) }
+            subscribedPaths.visit(object :
+                RadixTreeVisitor<Boolean, Void?> {
+                override fun visit(key: String?, value: Boolean?): Boolean {
+                    if (key == null || !path.startsWith(key)) {
+                        return false
+                    }
+                    deletions.add(path)
+                    subscribedOriginalPathsToDetailPaths.remove(path)
+                        ?.let { subscribedDetailPathsToOriginalPaths.remove(it) }
+                    return true
+                }
+
+                override fun getResult(): Void? {
+                    return null
+                }
+            })
+        }
+
+        // then update our detail subscription paths
+        val updatedPaths = HashMap<String, String>()
+        changes.updates.forEach { (path, value) ->
+            subscribedPaths.visit(object :
+                RadixTreeVisitor<Boolean, Void?> {
+                override fun visit(key: String?, v: Boolean?): Boolean {
+                    if (key == null || !path.startsWith(key)) {
+                        return false
+                    }
+                    val detailPath = value.value as String
+                    subscribedOriginalPathsToDetailPaths[path] = detailPath
+                    subscribedDetailPathsToOriginalPaths[detailPath] = path
+                    updatedPaths[path] = detailPath
+                    return true
+                }
+
+                override fun getResult(): Void? {
+                    return null
+                }
+            })
+        }
+
+        // then capture updates to details
+        val updates = HashMap<String, PathAndValue<Raw<T>>>()
+        changes.updates.forEach { (detailPath, value) ->
+            subscribedDetailPathsToOriginalPaths[detailPath]
+                ?.let { originalPath ->
+                    updates[originalPath] = PathAndValue(detailPath, value as Raw<T>)
+                    updatedPaths.remove(originalPath)
+                }
+        }
+
+        // lastly capture values for any updated paths that didn't get an update from the corresponding detail path
+        updatedPaths.forEach { (path, detailPath) ->
+            db.getRaw<T>(detailPath)?.let { updates[path] = PathAndValue(detailPath, it) }
+        }
+
+        // now notify original subscriber
+        onChanges(DetailsChangeSet(updates = updates, deletions = deletions))
+    }
 }
 
 /**
@@ -169,7 +284,7 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
         })
     }
 
-    internal fun <T : Any> doSubscribe(
+    private fun <T : Any> doSubscribe(
         subscriber: RawSubscriber<T>,
         receiveInitial: Boolean = true
     ) {
@@ -194,38 +309,21 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
         }
     }
 
-    /**
-     * Registers a subscriber for updates to details for the paths matching its pathPrefix.
-     *
-     * The values corresponding to paths matching the pathPrefix are themselves treated as paths
-     * with which to look up the details.
-     *
-     * For example, given the following data:
-     *
-     * {"/detail/1": "one",
-     *  "/detail/2": "two",
-     *  "/list/1": "/detail/2",
-     *  "/list/2": "/detail/1"}
-     *
-     * A details subscription to prefix "/list/" would include ["one", "two"]. It would be notified
-     * if the paths /detail/1 or /detail/2 change, or if a new item is added to /list/ or an item
-     * is deleted from /list/.
-     */
-    fun <T : Any> subscribeDetails(
-        subscriber: RawSubscriber<T>,
+    fun <T : Any> subscribe(
+        subscriber: DetailsSubscriber<T>,
         receiveInitial: Boolean = true
     ) {
-        txExecute(Callable<Unit> {
+        subscriber.db = this
+        txExecute {
             doSubscribeDetails(subscriber, receiveInitial)
-        })
+        }
     }
 
     private fun <T : Any> doSubscribeDetails(
-        subscriber: RawSubscriber<T>,
+        subscriber: DetailsSubscriber<T>,
         receiveInitial: Boolean = true
     ) {
-        val detailsSubscriber = DetailsSubscriber(this, subscriber)
-        doSubscribe(detailsSubscriber, receiveInitial = false)
+        doSubscribe(subscriber, receiveInitial = false)
         if (receiveInitial) {
             subscriber.cleanedPathPrefixes.forEach { pathPrefix ->
                 val list = listDetailsRaw<T>("${pathPrefix}%")
@@ -236,7 +334,7 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
                     // this is the actual detail
                     updates[detail.detailPath] = detail.value as Raw<Any>
                 }
-                detailsSubscriber.onChanges(RawChangeSet<Any>(updates = updates))
+                subscriber.onChanges(RawChangeSet(updates = updates))
             }
         }
     }
@@ -445,7 +543,7 @@ open class Queryable internal constructor(
      * Like findOne, but returning the raw value and path
      */
     @Throws(TooManyMatchesException::class)
-    fun <T : Any> findOneRaw(pathQuery: String): Entry<Raw<T>>? {
+    fun <T : Any> findOneRaw(pathQuery: String): PathAndValue<Raw<T>>? {
         db.rawQuery(
             "SELECT path, value FROM data WHERE path LIKE(?)",
             arrayOf(serde.serialize(pathQuery))
@@ -458,7 +556,7 @@ open class Queryable internal constructor(
             if (cursor.moveToNext()) {
                 throw TooManyMatchesException()
             }
-            return Entry(serde.deserialize(path), Raw(serde, value))
+            return PathAndValue(serde.deserialize(path), Raw(serde, value))
         }
     }
 
@@ -484,11 +582,11 @@ open class Queryable internal constructor(
         count: Int = Int.MAX_VALUE,
         fullTextSearch: String? = null,
         reverseSort: Boolean = false
-    ): List<Entry<T>> {
-        val result = ArrayList<Entry<T>>()
+    ): List<PathAndValue<T>> {
+        val result = ArrayList<PathAndValue<T>>()
         doList(pathQuery, start, count, fullTextSearch, reverseSort) { cursor ->
             result.add(
-                Entry(
+                PathAndValue(
                     serde.deserialize(cursor.getBlob(0)),
                     serde.deserialize(cursor.getBlob(1))
                 )
@@ -506,11 +604,11 @@ open class Queryable internal constructor(
         count: Int = Int.MAX_VALUE,
         fullTextSearch: String? = null,
         reverseSort: Boolean = false
-    ): List<Entry<Raw<T>>> {
-        val result = ArrayList<Entry<Raw<T>>>()
+    ): List<PathAndValue<Raw<T>>> {
+        val result = ArrayList<PathAndValue<Raw<T>>>()
         doList(pathQuery, start, count, fullTextSearch, reverseSort) { cursor ->
             result.add(
-                Entry(
+                PathAndValue(
                     serde.deserialize(cursor.getBlob(0)),
                     Raw(serde, cursor.getBlob(1))
                 )
@@ -858,86 +956,5 @@ class Transaction internal constructor(
         changesBySubscriber.forEach { (subscriber, changes) ->
             subscriber.onChanges(changes)
         }
-    }
-}
-
-internal class DetailsSubscriber<T : Any>(
-    private val db: DB,
-    private val originalSubscriber: RawSubscriber<T>
-) : RawSubscriber<Any>(
-    originalSubscriber.id,
-    "%"
-) {
-    internal val subscribedPaths = RadixTree<Boolean>()
-    internal val subscribedDetailPathsToOriginalPaths = HashMap<String, String>()
-    internal val subscribedOriginalPathsToDetailPaths = HashMap<String, String>()
-
-    init {
-        originalSubscriber.cleanedPathPrefixes.forEach { path -> subscribedPaths.put(path, true) }
-    }
-
-    override fun onChanges(changes: RawChangeSet<Any>) {
-        // process deletions first
-        val deletions = HashSet<String>()
-        changes.deletions.forEach { path ->
-            subscribedDetailPathsToOriginalPaths.remove(path)
-                ?.let { originalPath -> deletions.add(originalPath) }
-            subscribedPaths.visit(object :
-                RadixTreeVisitor<Boolean, Void?> {
-                override fun visit(key: String?, value: Boolean?): Boolean {
-                    if (key == null || !path.startsWith(key)) {
-                        return false
-                    }
-                    deletions.add(path)
-                    subscribedOriginalPathsToDetailPaths.remove(path)
-                        ?.let { subscribedDetailPathsToOriginalPaths.remove(it) }
-                    return true
-                }
-
-                override fun getResult(): Void? {
-                    return null
-                }
-            })
-        }
-
-        // then update our detail subscription paths
-        val updatedPaths = HashMap<String, String>()
-        changes.updates.forEach { (path, value) ->
-            subscribedPaths.visit(object :
-                RadixTreeVisitor<Boolean, Void?> {
-                override fun visit(key: String?, v: Boolean?): Boolean {
-                    if (key == null || !path.startsWith(key)) {
-                        return false
-                    }
-                    val detailPath = value.value as String
-                    subscribedOriginalPathsToDetailPaths[path] = detailPath
-                    subscribedDetailPathsToOriginalPaths[detailPath] = path
-                    updatedPaths[path] = detailPath
-                    return true
-                }
-
-                override fun getResult(): Void? {
-                    return null
-                }
-            })
-        }
-
-        // then capture updates to details
-        val updates = HashMap<String, Raw<T>>()
-        changes.updates.forEach { (path, value) ->
-            subscribedDetailPathsToOriginalPaths[path]
-                ?.let { originalPath ->
-                    updates[originalPath] = value as Raw<T>
-                    updatedPaths.remove(originalPath)
-                }
-        }
-
-        // lastly capture values for any updated paths that didn't get an update from the corresponding detail path
-        updatedPaths.forEach { (path, detailPath) ->
-            db.getRaw<T>(detailPath)?.let { updates[path] = it }
-        }
-
-        // now notify original subscriber
-        originalSubscriber.onChanges(RawChangeSet(updates = updates, deletions = deletions))
     }
 }
