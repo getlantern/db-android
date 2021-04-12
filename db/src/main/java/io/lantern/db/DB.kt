@@ -706,6 +706,15 @@ class Transaction internal constructor(
     }
 
     /**
+     * Gets the given value if present otherwise puts the new value.
+     *
+     * @return whatever value is now in the database (either the one gotten or the one put)
+     */
+    fun <T : Any> getOrPut(path: String, value: T?, fullText: String? = null): T? {
+        return get<T>(path) ?: put(path, value, fullText)
+    }
+
+    /**
      * Puts the given value at the given path if and only if there was no value already present.
      *
      * @return true if the value was successfully put, false if it wasn't because there was already a value

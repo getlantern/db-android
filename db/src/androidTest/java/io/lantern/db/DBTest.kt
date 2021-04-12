@@ -259,6 +259,22 @@ class DBTest {
         }
     }
 
+    fun testGetOrPut() {
+        buildDB().use { db ->
+            var putValue = db.mutatePublishBlocking { tx ->
+                tx.getOrPut("path", "a")
+            }
+            assertEquals("new value should have been returned by getOrPut", "a", putValue)
+            assertEquals("correct value should have been inserted", "a", db.get("path"))
+
+            putValue = db.mutatePublishBlocking { tx ->
+                tx.getOrPut("path", "b")
+            }
+            assertEquals("old value should have been returned by getOrPut", "a", putValue)
+            assertEquals("existing value should have been left alone", "a", db.get("path"))
+        }
+    }
+
     @Test
     fun testGetDetails() {
         buildDB().use { db ->
