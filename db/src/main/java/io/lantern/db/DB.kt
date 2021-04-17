@@ -472,14 +472,14 @@ class DB private constructor(
     /**
      * Returns a SharedPreferences backed by this db.
      *
-     * @param prefix - preference keys are prefixed with this for storage in the db, for example if prefix="/prefs/" and the preference key is "mypref", it would be stored at "/prefs/mypref"
+     * @param schema - preference keys are stored in this named schema
      * @param fallback - an optional fallback SharedPreferences to use for values that aren't found in the db
      */
     fun asSharedPreferences(
-        prefix: String = "",
+        schema: String,
         fallback: SharedPreferences? = null
     ): SharedPreferences {
-        return SharedPreferencesAdapter(this, prefix, fallback)
+        return SharedPreferencesAdapter(this.withSchema(schema), fallback)
     }
 
     private fun <T> txExecute(cmd: Callable<T>): T {
