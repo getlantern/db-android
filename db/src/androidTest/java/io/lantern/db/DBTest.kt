@@ -579,6 +579,54 @@ class DBTest {
     }
 
     @Test
+    fun testSchema() {
+        buildDB().use { parent ->
+            val parentUpdates = HashMap<String, Any>()
+            parent.subscribe(object : Subscriber<Any>("subscriber", "%") {
+                override fun onChanges(changes: ChangeSet<Any>) {
+                    parentUpdates.putAll(changes.updates)
+                }
+            })
+
+            parent.withSchema("child").use { child ->
+                val childUpdates = HashMap<String, Any>()
+                child.subscribe(object : Subscriber<Any>("subscriber", "%") {
+                    override fun onChanges(changes: ChangeSet<Any>) {
+                        childUpdates.putAll(changes.updates)
+                    }
+                })
+
+                parent.mutatePublishBlocking { parentTx ->
+                    parentTx.put("path", "p")
+                    child.mutatePublishBlocking { childTx ->
+                        childTx.put("path", "c")
+                    }
+                }
+
+                assertEquals("parent should have correct value", "p", parent.get<String>("path"))
+                assertEquals("child should have correct value", "c", child.get<String>("path"))
+
+                assertEquals(
+                    "parent subscriber should have gotten relevant updates",
+                    mapOf("path" to "p"),
+                    parentUpdates
+                )
+                assertEquals(
+                    "child subscriber should have gotten relevant updates",
+                    mapOf("path" to "c"),
+                    childUpdates
+                )
+            }
+
+            assertEquals(
+                "parent should still be open and queryable after closing child",
+                "p",
+                parent.get<String>("path")
+            )
+        }
+    }
+
+    @Test
     fun testDurability() {
         buildDB().use { db ->
             db.mutatePublishBlocking { tx ->

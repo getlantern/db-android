@@ -196,17 +196,66 @@ class TooManyMatchesException : Exception("More than one value matched path quer
  * Provides a simple key/value store with a map-like interface. It allows the registration of
  * subscribers that observe changes to values at key paths.
  */
-class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, Serde()), Closeable {
+class DB private constructor(
+    db: SQLiteDatabase,
+    schema: String,
+    private val currentTransaction: ThreadLocal<Transaction>,
+    private val savepointSequence: AtomicInteger,
+    private val txExecutor: ExecutorService,
+    private val publishExecutor: ExecutorService,
+    private val derived: Boolean = false
+) :
+    Queryable(db, schema, Serde()), Closeable {
     private val subscribers = RadixTree<PersistentMap<String, RawSubscriber<Any>>>()
     private val subscribersById = ConcurrentHashMap<String, RawSubscriber<Any>>()
-    private val txExecutor = Executors.newSingleThreadExecutor {
-        Thread(it, "${name}-tx-executor")
+
+    private constructor(db: SQLiteDatabase, schema: String, name: String) : this(
+        db,
+        schema,
+        ThreadLocal(),
+        AtomicInteger(),
+        Executors.newSingleThreadExecutor {
+            Thread(it, "${name}-tx-executor")
+        },
+        Executors.newSingleThreadExecutor {
+            Thread(it, "${name}-publish-executor")
+        }) {
     }
-    private val currentTransaction = ThreadLocal<Transaction>()
-    private val savepointSequence = AtomicInteger()
-    private val publishExecutor = Executors.newSingleThreadExecutor {
-        Thread(it, "${name}-publish-executor")
+
+    init {
+        if (schema.contains(Regex("\\s"))) {
+            throw IllegalArgumentException("database name must not contain whitespace")
+        }
+
+        // All data is stored in a single table that has a TEXT path, a BLOB value. The table is
+        // stored as an index organized table (WITHOUT ROWID option) as a performance
+        // optimization for range scans on the path. To support full text indexing with an
+        // external content fts5 table, we include a manually managed INTEGER rowid to which we
+        // can join the fts5 virtual table. Rows that are not full text indexed have a null
+        // to save space.
+        db.execSQL("CREATE TABLE IF NOT EXISTS ${schema}_data (path TEXT PRIMARY KEY, value BLOB, rowid INTEGER) WITHOUT ROWID")
+        // Create an index on only text values to speed up detail lookups that join on path = value
+        db.execSQL("CREATE INDEX IF NOT EXISTS ${schema}_data_value_index ON ${schema}_data(value) WHERE SUBSTR(CAST(value AS TEXT), 1, 1) = 'T'")
+        // Create a table for full text search
+        db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS ${schema}_fts USING fts5(value, content=data, tokenize='porter unicode61')")
+        // Create a table for managing custom counters (currently used only for full text indexing)
+        db.execSQL("CREATE TABLE IF NOT EXISTS ${schema}_counters (id INTEGER PRIMARY KEY, value INTEGER)")
     }
+
+    /**
+     * Returns a DB backed by the same underlying SQLLite database, but saving data in its own set
+     * of tables (a "schema").
+     */
+    fun withSchema(schema: String) =
+        DB(
+            db,
+            schema,
+            currentTransaction,
+            savepointSequence,
+            txExecutor,
+            publishExecutor,
+            derived = true
+        )
 
     companion object {
         /**
@@ -220,6 +269,7 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
             filePath: String,
             password: String,
             secureDelete: Boolean = true,
+            schema: String = "default",
             name: String = File(filePath).name
         ): DB {
             // TODO: if the process crashes in the middle of creating the DB, the next time we start
@@ -239,20 +289,7 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
                     }
                 }
             }
-            // All data is stored in a single table that has a TEXT path, a BLOB value. The table is
-            // stored as an index organized table (WITHOUT ROWID option) as a performance
-            // optimization for range scans on the path. To support full text indexing with an
-            // external content fts5 table, we include a manually managed INTEGER rowid to which we
-            // can join the fts5 virtual table. Rows that are not full text indexed have a null
-            // to save space.
-            db.execSQL("CREATE TABLE IF NOT EXISTS data (path TEXT PRIMARY KEY, value BLOB, rowid INTEGER) WITHOUT ROWID")
-            // Create an index on only text values to speed up detail lookups that join on path = value
-            db.execSQL("CREATE INDEX IF NOT EXISTS data_value_index ON data(value) WHERE SUBSTR(CAST(value AS TEXT), 1, 1) = 'T'")
-            // Create a table for full text search
-            db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(value, content=data, tokenize='porter unicode61')")
-            // Create a table for managing custom counters (currently used only for full text indexing)
-            db.execSQL("CREATE TABLE IF NOT EXISTS counters (id INTEGER PRIMARY KEY, value INTEGER)")
-            return DB(db, name)
+            return DB(db, schema, name)
         }
     }
 
@@ -373,7 +410,7 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
         val tx = synchronized(this) {
             val _tx = currentTransaction.get()
             if (_tx == null) {
-                Transaction(db, serde, subscribers)
+                Transaction(db, schema, serde, HashMap(mapOf(schema to subscribers)))
             } else {
                 inExecutor = true
                 _tx
@@ -382,12 +419,14 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
 
         return if (inExecutor) {
             // we're already in the executor thread, do the work with a savepoint
+            tx.subscribersBySchema[schema] = subscribers
             val nestedTx = Transaction(
                 db,
+                schema,
                 serde,
-                subscribers,
-                tx.updates,
-                tx.deletions,
+                tx.subscribersBySchema,
+                tx.updatesBySchema,
+                tx.deletionsBySchema,
                 "save_${savepointSequence.incrementAndGet()}"
             )
             try {
@@ -453,6 +492,10 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
 
     @Synchronized
     override fun close() {
+        if (derived) {
+            // ignore close on derived databases
+            return
+        }
         txExecutor.shutdownNow()
         publishExecutor.shutdownNow()
         txExecutor.awaitTermination(10, TimeUnit.SECONDS)
@@ -463,6 +506,7 @@ class DB private constructor(db: SQLiteDatabase, name: String) : Queryable(db, S
 
 open class Queryable internal constructor(
     protected val db: SQLiteDatabase,
+    internal val schema: String,
     internal val serde: Serde
 ) {
     /**
@@ -494,7 +538,7 @@ open class Queryable internal constructor(
      */
     fun contains(path: String): Boolean {
         db.rawQuery(
-            "SELECT COUNT(path) FROM data WHERE path = ?",
+            "SELECT COUNT(path) FROM ${schema}_data WHERE path = ?",
             arrayOf(serde.serialize(path))
         ).use { cursor ->
             return cursor != null && cursor.moveToNext() && cursor.getInt(0) > 0
@@ -503,7 +547,7 @@ open class Queryable internal constructor(
 
     private fun selectSingle(path: String): Cursor {
         return db.rawQuery(
-            "SELECT value FROM data WHERE path = ?",
+            "SELECT value FROM ${schema}_data WHERE path = ?",
             arrayOf(serde.serialize(path))
         )
     }
@@ -514,7 +558,7 @@ open class Queryable internal constructor(
      */
     fun <T : Any> getDetail(path: String): T? {
         db.rawQuery(
-            "SELECT d.value FROM data l INNER JOIN data d ON l.value = d.path WHERE l.path = ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T'",
+            "SELECT d.value FROM ${schema}_data l INNER JOIN ${schema}_data d ON l.value = d.path WHERE l.path = ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T'",
             arrayOf(serde.serialize(path))
         ).use { cursor ->
             if (cursor == null || !cursor.moveToNext()) {
@@ -545,7 +589,7 @@ open class Queryable internal constructor(
     @Throws(TooManyMatchesException::class)
     fun <T : Any> findOneRaw(pathQuery: String): PathAndValue<Raw<T>>? {
         db.rawQuery(
-            "SELECT path, value FROM data WHERE path LIKE(?)",
+            "SELECT path, value FROM ${schema}_data WHERE path LIKE(?)",
             arrayOf(serde.serialize(pathQuery))
         ).use { cursor ->
             if (cursor == null || !cursor.moveToNext()) {
@@ -644,13 +688,13 @@ open class Queryable internal constructor(
     ) {
         val cursor = if (fullTextSearch != null) {
             db.rawQuery(
-                "SELECT data.path, data.value FROM fts INNER JOIN data ON fts.rowid = data.rowid WHERE data.path LIKE ? AND fts.value MATCH ? ORDER BY fts.rank LIMIT ? OFFSET ?",
+                "SELECT d.path, d.value FROM ${schema}_fts f INNER JOIN ${schema}_data d ON f.rowid = d.rowid WHERE d.path LIKE ? AND f.value MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
                 arrayOf(serde.serialize(pathQuery), fullTextSearch, count, start)
             )
         } else {
             val sortOrder = if (reverseSort) "DESC" else "ASC"
             db.rawQuery(
-                "SELECT path, value FROM data WHERE path LIKE ? ORDER BY path $sortOrder LIMIT ? OFFSET ?",
+                "SELECT path, value FROM ${schema}_data WHERE path LIKE ? ORDER BY path $sortOrder LIMIT ? OFFSET ?",
                 arrayOf(serde.serialize(pathQuery), count, start)
             )
         }
@@ -733,13 +777,13 @@ open class Queryable internal constructor(
     ): Unit {
         val cursor = if (fullTextSearch != null) {
             db.rawQuery(
-                "SELECT l.path, d.path, d.value FROM data l INNER JOIN data d ON l.value = d.path INNER JOIN fts ON fts.rowid = d.rowid WHERE l.path LIKE ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T' AND fts.value MATCH ? ORDER BY fts.rank LIMIT ? OFFSET ?",
+                "SELECT l.path, d.path, d.value FROM ${schema}_data l INNER JOIN ${schema}_data d ON l.value = d.path INNER JOIN ${schema}_fts f ON f.rowid = d.rowid WHERE l.path LIKE ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T' AND f.value MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
                 arrayOf(serde.serialize(pathQuery), fullTextSearch, count, start)
             )
         } else {
             val sortOrder = if (reverseSort) "DESC" else "ASC"
             db.rawQuery(
-                "SELECT l.path, d.path, d.value FROM data l INNER JOIN data d ON l.value = d.path WHERE l.path LIKE ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T' ORDER BY l.path $sortOrder LIMIT ? OFFSET ?",
+                "SELECT l.path, d.path, d.value FROM ${schema}_data l INNER JOIN ${schema}_data d ON l.value = d.path WHERE l.path LIKE ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T' ORDER BY l.path $sortOrder LIMIT ? OFFSET ?",
                 arrayOf(serde.serialize(pathQuery), count, start)
             )
         }
@@ -759,15 +803,21 @@ open class Queryable internal constructor(
 
 class Transaction internal constructor(
     db: SQLiteDatabase,
+    schema: String,
     serde: Serde,
-    private val subscribers: RadixTree<PersistentMap<String, RawSubscriber<Any>>>,
-    private val parentUpdates: HashMap<String, Raw<Any>>? = null,
-    private val parentDeletions: TreeSet<String>? = null,
+    internal val subscribersBySchema: HashMap<String, RadixTree<PersistentMap<String, RawSubscriber<Any>>>>,
+    private val parentUpdatesBySchema: HashMap<String, HashMap<String, Raw<Any>>>? = null,
+    private val parentDeletionsBySchema: HashMap<String, TreeSet<String>>? = null,
     private val savepoint: String? = null,
-) : Queryable(db, serde) {
-    internal val updates = HashMap<String, Raw<Any>>()
-    internal val deletions = TreeSet<String>()
+) : Queryable(db, schema, serde) {
+    internal val updatesBySchema = HashMap<String, HashMap<String, Raw<Any>>>()
+    internal val deletionsBySchema = HashMap<String, TreeSet<String>>()
     private var savepointSuccessful = false
+
+    init {
+        updatesBySchema[schema] = updatesBySchema[schema] ?: HashMap()
+        deletionsBySchema[schema] = deletionsBySchema[schema] ?: TreeSet()
+    }
 
     internal fun beginSavepoint() {
         db.execSQL("SAVEPOINT $savepoint")
@@ -781,8 +831,20 @@ class Transaction internal constructor(
         db.execSQL(if (savepointSuccessful) "RELEASE $savepoint" else "ROLLBACK TO $savepoint")
         if (savepointSuccessful) {
             // merge updates and deletions into parent
-            parentUpdates?.putAll(updates)
-            parentDeletions?.addAll(deletions)
+            parentUpdatesBySchema?.let { parentUpdates ->
+                updatesBySchema.forEach { (schema, updates) ->
+                    val parentUpdatesForSchema = parentUpdates[schema] ?: HashMap()
+                    parentUpdatesForSchema.putAll(updates)
+                    parentUpdates[schema] = parentUpdatesForSchema
+                }
+            }
+            parentDeletionsBySchema?.let { parentDeletions ->
+                deletionsBySchema.forEach { (schema, deletions) ->
+                    val parentDeletionsForSchema = parentDeletions[schema] ?: TreeSet()
+                    parentDeletionsForSchema.addAll(deletions)
+                    parentDeletions[schema] = parentDeletionsForSchema
+                }
+            }
         }
     }
 
@@ -838,8 +900,8 @@ class Transaction internal constructor(
         val bytes = serde.serialize(value)
         var rowId: Long? = null
         if (fullText != null) {
-            db.execSQL("INSERT INTO counters(id, value) VALUES(0, 0) ON CONFLICT(id) DO UPDATE SET value = value+1")
-            db.rawQuery("SELECT value FROM counters WHERE id = 0", null).use { cursor ->
+            db.execSQL("INSERT INTO ${schema}_counters(id, value) VALUES(0, 0) ON CONFLICT(id) DO UPDATE SET value = value+1")
+            db.rawQuery("SELECT value FROM ${schema}_counters WHERE id = 0", null).use { cursor ->
                 if (cursor == null || !cursor.moveToNext()) {
                     throw RuntimeException("Unable to read counter value for full text indexing")
                 }
@@ -847,17 +909,17 @@ class Transaction internal constructor(
             }
         }
         db.execSQL(
-            "INSERT INTO data(path, value, rowid) VALUES(?, ?, ?)${onConflictClause}",
+            "INSERT INTO ${schema}_data(path, value, rowid) VALUES(?, ?, ?)${onConflictClause}",
             arrayOf(serializedPath, bytes, rowId)
         )
         if (fullText != null) {
             db.execSQL(
-                "INSERT INTO fts(rowid, value) VALUES(?, ?)",
+                "INSERT INTO ${schema}_fts(rowid, value) VALUES(?, ?)",
                 arrayOf(rowId, fullText)
             )
         }
-        updates[path] = Raw(serde, bytes, value)
-        deletions -= path
+        updatesBySchema[schema]!![path] = Raw(serde, bytes, value)
+        deletionsBySchema[schema]!! -= path
     }
 
     /**
@@ -874,11 +936,11 @@ class Transaction internal constructor(
         val serializedPath = serde.serialize(path)
         extractFullText?.let {
             db.rawQuery(
-                "SELECT rowid, value FROM data WHERE path = ?", arrayOf(serializedPath)
+                "SELECT rowid, value FROM ${schema}_data WHERE path = ?", arrayOf(serializedPath)
             ).use { cursor ->
                 if (cursor != null && cursor.moveToNext()) {
                     db.execSQL(
-                        "INSERT INTO fts(fts, rowid, value) VALUES('delete', ?, ?)",
+                        "INSERT INTO ${schema}_fts(${schema}_fts, rowid, value) VALUES('delete', ?, ?)",
                         arrayOf(
                             cursor.getLong(0),
                             extractFullText(serde.deserialize(cursor.getBlob(1)))
@@ -887,9 +949,9 @@ class Transaction internal constructor(
                 }
             }
         }
-        db.execSQL("DELETE FROM data WHERE path = ?", arrayOf(serializedPath))
-        deletions += path
-        updates.remove(path)
+        db.execSQL("DELETE FROM ${schema}_data WHERE path = ?", arrayOf(serializedPath))
+        deletionsBySchema[schema]!! += path
+        updatesBySchema[schema]!!.remove(path)
     }
 
     fun delete(path: String) {
@@ -899,58 +961,62 @@ class Transaction internal constructor(
     internal fun publish() {
         val changesBySubscriber = HashMap<RawSubscriber<Any>, RawChangeSet<Any>>()
 
-        updates.forEach { (path, newValue) ->
-            subscribers.visit(object :
-                RadixTreeVisitor<PersistentMap<String, RawSubscriber<Any>>, Void?> {
-                override fun visit(
-                    key: String?,
-                    value: PersistentMap<String, RawSubscriber<Any>>?
-                ): Boolean {
-                    if (key == null || !path.startsWith(key)) {
-                        return false
-                    }
-                    value?.values?.forEach {
-                        var changes = changesBySubscriber[it]
-                        if (changes == null) {
-                            changes = RawChangeSet(updates = HashMap(), deletions = HashSet())
-                            changesBySubscriber[it] = changes
+        updatesBySchema.forEach { (schema, updates) ->
+            updates.forEach { (path, newValue) ->
+                subscribersBySchema[schema]?.visit(object :
+                    RadixTreeVisitor<PersistentMap<String, RawSubscriber<Any>>, Void?> {
+                    override fun visit(
+                        key: String?,
+                        value: PersistentMap<String, RawSubscriber<Any>>?
+                    ): Boolean {
+                        if (key == null || !path.startsWith(key)) {
+                            return false
                         }
-                        (changes.updates as MutableMap)[path] = newValue
+                        value?.values?.forEach {
+                            var changes = changesBySubscriber[it]
+                            if (changes == null) {
+                                changes = RawChangeSet(updates = HashMap(), deletions = HashSet())
+                                changesBySubscriber[it] = changes
+                            }
+                            (changes.updates as MutableMap)[path] = newValue
+                        }
+                        return true
                     }
-                    return true
-                }
 
-                override fun getResult(): Void? {
-                    return null
-                }
-            })
+                    override fun getResult(): Void? {
+                        return null
+                    }
+                })
+            }
         }
 
-        deletions.forEach { path ->
-            subscribers.visit(object :
-                RadixTreeVisitor<PersistentMap<String, RawSubscriber<Any>>, Void?> {
-                override fun visit(
-                    key: String?,
-                    value: PersistentMap<String, RawSubscriber<Any>>?
-                ): Boolean {
-                    if (key == null || !path.startsWith(key)) {
-                        return false
-                    }
-                    value?.values?.forEach {
-                        var changes = changesBySubscriber[it]
-                        if (changes == null) {
-                            changes = RawChangeSet(updates = HashMap(), deletions = HashSet())
-                            changesBySubscriber[it] = changes!!
+        deletionsBySchema.forEach { (schema, deletions) ->
+            deletions.forEach { path ->
+                subscribersBySchema[schema]?.visit(object :
+                    RadixTreeVisitor<PersistentMap<String, RawSubscriber<Any>>, Void?> {
+                    override fun visit(
+                        key: String?,
+                        value: PersistentMap<String, RawSubscriber<Any>>?
+                    ): Boolean {
+                        if (key == null || !path.startsWith(key)) {
+                            return false
                         }
-                        (changes!!.deletions as MutableSet).add(path)
+                        value?.values?.forEach {
+                            var changes = changesBySubscriber[it]
+                            if (changes == null) {
+                                changes = RawChangeSet(updates = HashMap(), deletions = HashSet())
+                                changesBySubscriber[it] = changes!!
+                            }
+                            (changes!!.deletions as MutableSet).add(path)
+                        }
+                        return true
                     }
-                    return true
-                }
 
-                override fun getResult(): Void? {
-                    return null
-                }
-            })
+                    override fun getResult(): Void? {
+                        return null
+                    }
+                })
+            }
         }
 
         changesBySubscriber.forEach { (subscriber, changes) ->
