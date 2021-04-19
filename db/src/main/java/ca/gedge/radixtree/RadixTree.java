@@ -198,7 +198,7 @@ public class RadixTree<V> implements Map<String, V> {
 	 */
 	public List<Map.Entry<String, V>> getEntriesWithPrefix(String prefix) {
 		RadixTreeVisitor<V, List<Map.Entry<String, V>>> visitor = new RadixTreeVisitor<V, List<Map.Entry<String, V>>>() {
-			List<Map.Entry<String, V>> result = new ArrayList<Map.Entry<String, V>>();
+			final List<Map.Entry<String, V>> result = new ArrayList<Map.Entry<String, V>>();
 
 			@Override
 			public boolean visit(String key, V value) {
@@ -229,7 +229,7 @@ public class RadixTree<V> implements Map<String, V> {
 			throw new NullPointerException("prefix cannot be null");
 
 		RadixTreeVisitor<V, List<V>> visitor = new RadixTreeVisitor<V, List<V>>() {
-			List<V> result = new ArrayList<V>();
+			final List<V> result = new ArrayList<V>();
 
 			@Override
 			public boolean visit(String key, V value) {
@@ -260,7 +260,7 @@ public class RadixTree<V> implements Map<String, V> {
 			throw new NullPointerException("prefix cannot be null");
 
 		RadixTreeVisitor<V, List<String>> visitor = new RadixTreeVisitor<V, List<String>>() {
-			List<String> result = new ArrayList<String>();
+			final List<String> result = new ArrayList<String>();
 
 			@Override
 			public boolean visit(String key, V value) {
@@ -315,7 +315,7 @@ public class RadixTree<V> implements Map<String, V> {
 		//      reflected in the parent structure
 		//
 		RadixTreeVisitor<V, Set<Map.Entry<String, V>>> visitor = new RadixTreeVisitor<V, Set<Map.Entry<String, V>>>() {
-			Set<Map.Entry<String, V>> result = new HashSet<Map.Entry<String, V>>();
+			final Set<Map.Entry<String, V>> result = new HashSet<Map.Entry<String, V>>();
 
 			@Override
 			public boolean visit(String key, V value) {
@@ -339,7 +339,7 @@ public class RadixTree<V> implements Map<String, V> {
 		//      reflected in the parent structure
 		//
 		RadixTreeVisitor<V, Set<String>> visitor = new RadixTreeVisitor<V, Set<String>>() {
-			Set<String> result = new TreeSet<String>();
+			final Set<String> result = new TreeSet<String>();
 
 			@Override
 			public boolean visit(String key, V value) {
@@ -363,7 +363,7 @@ public class RadixTree<V> implements Map<String, V> {
 		//      reflected in the parent structure
 		//
 		RadixTreeVisitor<V, Collection<V>> visitor = new RadixTreeVisitor<V, Collection<V>>() {
-			Collection<V> result = new ArrayList<V>();
+			final Collection<V> result = new ArrayList<V>();
 
 			@Override
 			public boolean visit(String key, V value) {

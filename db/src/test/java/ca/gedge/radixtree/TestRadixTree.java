@@ -29,6 +29,7 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -178,7 +179,7 @@ public class TestRadixTree {
 		assertEquals(3, tree.get("tank").intValue());
 	}
 	
-	private SecureRandom rng = new SecureRandom();
+	private final SecureRandom rng = new SecureRandom();
 	
 	@Test
 	public void testManyInsertions() {
@@ -212,7 +213,7 @@ public class TestRadixTree {
 		BufferedReader br = null;
 
 		try {
-			br = new BufferedReader(new InputStreamReader(new FileInputStream("data/dict.dat"), "UTF-8"));
+			br = new BufferedReader(new InputStreamReader(new FileInputStream("data/dict.dat"), StandardCharsets.UTF_8));
 			final RadixTree<String> tree = new RadixTree<String>();
 			
 			// Read data into a list first, because we want to see how long it
@@ -224,7 +225,7 @@ public class TestRadixTree {
 			while((line = br.readLine()) != null) {
 				line = line.trim();
 				if(line.length() > 0) {
-					String pieces[] = line.split("\\s+", 2);
+					String[] pieces = line.split("\\s+", 2);
 					if(pieces.length == 2)
 						lines.add(pieces);
 				}

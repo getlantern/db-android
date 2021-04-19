@@ -48,18 +48,18 @@ class DBTest {
 
             assertEquals(
                 arrayListOf(
-                    Entry("/messages/a", "Message A"),
-                    Entry("/messages/b", "Message B"),
-                    Entry("/messages/c", "Message C"),
-                    Entry("/messages/d", "Message D")
+                    PathAndValue("/messages/a", "Message A"),
+                    PathAndValue("/messages/b", "Message B"),
+                    PathAndValue("/messages/c", "Message C"),
+                    PathAndValue("/messages/d", "Message D")
                 ), db.list<String>("/messages/%")
             )
             assertEquals(
                 arrayListOf(
-                    Entry("/messages/a", Raw(db.serde, "Message A")),
-                    Entry("/messages/b", Raw(db.serde, "Message B")),
-                    Entry("/messages/c", Raw(db.serde, "Message C")),
-                    Entry("/messages/d", Raw(db.serde, "Message D"))
+                    PathAndValue("/messages/a", Raw(db.serde, "Message A")),
+                    PathAndValue("/messages/b", Raw(db.serde, "Message B")),
+                    PathAndValue("/messages/c", Raw(db.serde, "Message C")),
+                    PathAndValue("/messages/d", Raw(db.serde, "Message D"))
                 ), db.listRaw<String>("/messages/%")
             )
 
@@ -160,7 +160,7 @@ class DBTest {
 
     @Test
     fun testFullTextQuery() {
-        val vals = mapOf(
+        val values = mapOf(
             "/messages/c" to Message("Message C blah blah"),
             "/messages/d" to Message("Message D blah blah blah"),
             "/messages/a" to Message("Message A blah"),
@@ -168,7 +168,7 @@ class DBTest {
         )
         buildDB().use { db ->
             db.mutatePublishBlocking { tx ->
-                vals.forEach { (path, value) ->
+                values.forEach { (path, value) ->
                     tx.put(path, value, fullText = value.body)
                 }
                 tx.putAll(
@@ -183,18 +183,18 @@ class DBTest {
 
             assertEquals(
                 arrayListOf(
-                    Entry("/messages/a", Message("Message A blah")),
-                    Entry("/messages/b", Message("Message B")),
-                    Entry("/messages/c", Message("Message C blah blah")),
-                    Entry("/messages/d", Message("Message D blah blah blah"))
+                    PathAndValue("/messages/a", Message("Message A blah")),
+                    PathAndValue("/messages/b", Message("Message B")),
+                    PathAndValue("/messages/c", Message("Message C blah blah")),
+                    PathAndValue("/messages/d", Message("Message D blah blah blah"))
                 ), db.list<String>("/messages/%")
             )
 
             assertEquals(
                 arrayListOf(
-                    Entry("/messages/d", Message("Message D blah blah blah")),
-                    Entry("/messages/c", Message("Message C blah blah")),
-                    Entry("/messages/a", Message("Message A blah"))
+                    PathAndValue("/messages/d", Message("Message D blah blah blah")),
+                    PathAndValue("/messages/c", Message("Message C blah blah")),
+                    PathAndValue("/messages/a", Message("Message A blah"))
                 ), db.list<String>("/%", fullTextSearch = "blah")
             )
 
@@ -218,7 +218,7 @@ class DBTest {
 
             assertEquals(
                 arrayListOf(
-                    Entry("/messages/a", Message("Message A blah"))
+                    PathAndValue("/messages/a", Message("Message A blah"))
                 ), db.list<String>("/%", fullTextSearch = "blah")
             )
 
@@ -230,11 +230,8 @@ class DBTest {
         buildDB().use { db ->
             val updates = ArrayList<String>()
             db.subscribe(object : Subscriber<String>("100", "path") {
-                override fun onUpdate(path: String, value: String) {
-                    updates.add(value)
-                }
-
-                override fun onDelete(path: String) {
+                override fun onChanges(changes: ChangeSet<String>) {
+                    changes.updates.values.forEach { updates.add(it) }
                 }
             })
 
@@ -252,12 +249,29 @@ class DBTest {
                 db.get("path")
             )
 
-            db.mutatePublishBlocking { tx ->
+            val putValue = db.mutatePublishBlocking { tx ->
                 tx.put("path", "c")
             }
+            assertEquals("put should have returned correct value", "c", putValue)
             assertEquals("value should have been udpated by regular put", "c", db.get("path"))
 
             assertEquals(arrayListOf("a", "c"), updates)
+        }
+    }
+
+    fun testGetOrPut() {
+        buildDB().use { db ->
+            var putValue = db.mutatePublishBlocking { tx ->
+                tx.getOrPut("path", "a")
+            }
+            assertEquals("new value should have been returned by getOrPut", "a", putValue)
+            assertEquals("correct value should have been inserted", "a", db.get("path"))
+
+            putValue = db.mutatePublishBlocking { tx ->
+                tx.getOrPut("path", "b")
+            }
+            assertEquals("old value should have been returned by getOrPut", "a", putValue)
+            assertEquals("existing value should have been left alone", "a", db.get("path"))
         }
     }
 
@@ -282,6 +296,7 @@ class DBTest {
                 tx.put("/path/1/thing", "1")
             }
             assertEquals("1", db.findOne(query))
+            assertEquals("/path/1/thing", db.findOneRaw<String>(query)?.path)
             db.mutatePublishBlocking { tx ->
                 tx.put("/path/2/thing", "2")
             }
@@ -307,18 +322,17 @@ class DBTest {
                 // note the use of a gratuitous trailing % which will be ignored
                 "path%"
             ) {
-                override fun onInitial(values: List<Entry<Raw<String>>>) {
+                override fun onInitial(values: List<PathAndValue<Raw<String>>>) {
                     assertEquals(1, values.size)
                     assertEquals("path", values[0].path)
                     assertEquals("the value", values[0].value.value)
                 }
 
-                override fun onUpdate(path: String, value: String) {
-                    assertEquals("path", path)
-                    assertEquals("new value", value)
-                }
-
-                override fun onDelete(path: String) {
+                override fun onChanges(changes: ChangeSet<String>) {
+                    changes.updates.forEach { (path, value) ->
+                        assertEquals("path", path)
+                        assertEquals("new value", value)
+                    }
                 }
             })
 
@@ -335,52 +349,42 @@ class DBTest {
             var currentValue = "original value"
 
             db.subscribe(object : Subscriber<String>("100", "path") {
-                override fun onUpdate(path: String, value: String) {
-                    fail("this subscriber was replaced and should never have been notified")
-                }
-
-                override fun onDelete(path: String) {
+                override fun onChanges(changes: ChangeSet<String>) {
+                    changes.updates.forEach { _ ->
+                        fail("this subscriber was replaced and should never have been notified")
+                    }
                 }
             })
 
             try {
                 db.subscribe(object : Subscriber<String>("100", "path") {
-                    override fun onUpdate(path: String, value: String) {
-                    }
-
-                    override fun onDelete(path: String) {
-                    }
+                    override fun onChanges(changes: ChangeSet<String>) {}
                 })
                 fail("re-registering already registered subscriber ID should not be allowed")
-            } catch (t: Throwable) {
-                assertTrue(t.cause is IllegalArgumentException)
+            } catch (t: IllegalArgumentException) {
+                // expected
             }
 
             db.unsubscribe("100")
 
             db.subscribe(object : Subscriber<String>("100", "path") {
-                override fun onUpdate(path: String, value: String) {
-                    assertEquals("path", path)
-                    // this subscriber should only ever get the original value because we unsubscribe later
-                    assertEquals("original value", value)
-                }
-
-                override fun onDelete(path: String) {
+                override fun onChanges(changes: ChangeSet<String>) {
+                    changes.updates.forEach { (path, value) ->
+                        assertEquals("path", path)
+                        assertEquals("original value", value)
+                    }
                 }
             })
 
             var calledDelete = false
 
             db.subscribe(object : Subscriber<String>("101", "path") {
-                override fun onUpdate(path: String, value: String) {
-                    assertEquals("path", path)
-                    // this subscriber should always get the current value becasue we don't unsubscribe it
-                    assertEquals(currentValue, value)
-                }
-
-                override fun onDelete(path: String) {
-                    assertEquals("path", path)
-                    calledDelete = true
+                override fun onChanges(changes: ChangeSet<String>) {
+                    changes.updates.forEach { (path, value) ->
+                        assertEquals("path", path)
+                        assertEquals(currentValue, value)
+                    }
+                    changes.deletions.forEach { _ -> calledDelete = true }
                 }
             })
 
@@ -414,24 +418,21 @@ class DBTest {
             var updateCalled = false
             var deleteCalled = false
             db.subscribe(object : Subscriber<String>("100", "/path") {
-                override fun onUpdate(path: String, value: String) {
-                    assertEquals("/path/3", path)
-                    assertEquals("3", value)
-                    updateCalled = true
-                }
-
-                override fun onDelete(path: String) {
-                    assertEquals("/path/1", path)
-                    deleteCalled = true
+                override fun onChanges(changes: ChangeSet<String>) {
+                    changes.updates.forEach { (path, value) ->
+                        assertEquals("/path/3", path)
+                        assertEquals("3", value)
+                        updateCalled = true
+                    }
+                    changes.deletions.forEach { _ -> deleteCalled = true }
                 }
             }, receiveInitial = false)
             db.subscribe(object : Subscriber<String>("101", "/pa/") {
-                override fun onUpdate(path: String, value: String) {
-                    fail("subscriber with no common prefix shouldn't get updates")
-                }
-
-                override fun onDelete(path: String) {
-                    fail("subscriber with no common prefix shouldn't get deletions")
+                override fun onChanges(changes: ChangeSet<String>) {
+                    changes.updates.forEach { _ ->
+                        fail("subscriber with no common prefix shouldn't get updates")
+                    }
+                    changes.deletions.forEach { fail("subscriber with no common prefix shouldn't get deletions") }
                 }
             }, receiveInitial = false)
 
@@ -460,13 +461,12 @@ class DBTest {
 
             var updates = 0
             db.subscribe(object : Subscriber<String>("100", "/path") {
-                override fun onUpdate(path: String, value: String) {
-                    assertTrue(path.startsWith("/path/"))
-                    assertEquals(path.substring(path.length - 1), value)
-                    updates += 1
-                }
-
-                override fun onDelete(path: String) {
+                override fun onChanges(changes: ChangeSet<String>) {
+                    changes.updates.forEach { (path, value) ->
+                        assertTrue(path.startsWith("/path/"))
+                        assertEquals(path.substring(path.length - 1), value)
+                        updates += 1
+                    }
                 }
             })
 
@@ -488,16 +488,16 @@ class DBTest {
                 )
             }
 
-            val updates = HashSet<Entry<String>>()
+            val updates = HashSet<PathAndValue<PathAndValue<String>>>()
             val deletions = HashSet<String>()
 
-            db.subscribeDetails(object : Subscriber<String>("100", "/list/") {
-                override fun onUpdate(path: String, value: String) {
-                    updates.add(Entry(path, value))
-                }
+            db.subscribe(object : DetailsSubscriber<String>("100", "/list/") {
+                override fun onChanges(changes: DetailsChangeSet<String>) {
+                    changes.updates.forEach { (path, value) ->
+                        updates.add(PathAndValue(path, PathAndValue(value.path, value.value.value)))
+                    }
 
-                override fun onDelete(path: String) {
-                    deletions.add(path)
+                    changes.deletions.forEach { path -> deletions.add(path) }
                 }
             })
 
@@ -516,16 +516,16 @@ class DBTest {
             }
 
             db.mutatePublishBlocking { tx ->
-                tx.delete("/detail/2") // should show up as a deletion of /list/2
+                tx.delete("/detail/2") // should show up as a deletion of /list/1
                 tx.delete("/list/2")
             }
 
             assertEquals(
                 setOf(
-                    Entry("/list/1", "2"),
-                    Entry("/list/2", "11"),
-                    Entry("/list/2", "1"),
-                    Entry("/list/3", "3"),
+                    PathAndValue("/list/1", PathAndValue("/detail/2", "2")),
+                    PathAndValue("/list/2", PathAndValue("/detail/1", "1")),
+                    PathAndValue("/list/2", PathAndValue("/detail/1", "11")),
+                    PathAndValue("/list/3", PathAndValue("/detail/3", "3")),
                 ), updates
             )
 
@@ -534,118 +534,47 @@ class DBTest {
     }
 
     @Test
-    fun testTail() {
+    fun testSubscribeDetailsWithCompoundChanges() {
         buildDB().use { db ->
+            val updates = ArrayList<PathAndValue<PathAndValue<String>>>()
+            val deletions = ArrayList<String>()
+
+            db.subscribe(object : DetailsSubscriber<String>("100", "/list/") {
+                override fun onChanges(changes: DetailsChangeSet<String>) {
+                    changes.updates.forEach { (path, value) ->
+                        updates.add(PathAndValue(path, PathAndValue(value.path, value.value.value)))
+                    }
+
+                    changes.deletions.forEach { path -> deletions.add(path) }
+                }
+            }, receiveInitial = false)
+
             db.mutatePublishBlocking { tx ->
                 tx.putAll(
                     mapOf(
-                        "/list/1" to "1",
-                        "/list/5" to "5"
+                        "/detail" to "1",
+                        "/list/1" to "/detail"
                     )
                 )
             }
 
-            var list = emptyList<String>()
-            db.tail(object : Subscriber<List<Raw<String>>>("100", "/list/") {
-                override fun onUpdate(path: String, value: List<Raw<String>>) {
-                    list = value.map { it.value }
-                }
-
-                override fun onDelete(path: String) {
-                    fail("onDelete should never be called")
-                }
-            }, count = 2)
-            assertEquals(listOf("5", "1"), list)
-
             db.mutatePublishBlocking { tx ->
-                tx.put("/list/3", "3")
-            }
-            assertEquals(listOf("5", "3"), list)
-
-            db.mutatePublishBlocking { tx ->
-                tx.put("/list/6", "6")
-            }
-            assertEquals(listOf("6", "5"), list)
-
-            db.mutatePublishBlocking { tx ->
-                tx.delete("/list/6")
-            }
-            assertEquals(listOf("5", "3"), list)
-
-            db.mutatePublishBlocking { tx ->
-                tx.delete("/list/5")
-            }
-            assertEquals(listOf("3", "1"), list)
-
-            db.mutatePublishBlocking { tx ->
-                tx.delete("/list/3")
-            }
-            assertEquals(listOf("1"), list)
-
-            db.mutatePublishBlocking { tx ->
+                tx.put("/list/2", "/fake")
+                tx.put("/fake", "0")
+                tx.put("/detail", "2")
+                tx.put("/list/2", "/detail")
                 tx.delete("/list/1")
-            }
-            assertEquals(emptyList<String>(), list)
-        }
-    }
-
-    @Test
-    fun testTailDetails() {
-        buildDB().use { db ->
-            db.mutatePublishBlocking { tx ->
-                tx.putAll(
-                    mapOf(
-                        "/detail/1" to "1",
-                        "/detail/5" to "5",
-                        "/list/1" to "/detail/1",
-                        "/list/5" to "/detail/5"
-                    )
-                )
+                tx.put("/detail", "3")
             }
 
-            var list = emptyList<String>()
-            db.tailDetails(object : Subscriber<List<Raw<String>>>("100", "/list/") {
-                override fun onUpdate(path: String, value: List<Raw<String>>) {
-                    list = value.map { it.value }
-                }
+            assertEquals(
+                listOf(
+                    PathAndValue("/list/1", PathAndValue("/detail", "1")),
+                    PathAndValue("/list/2", PathAndValue("/detail", "3")),
+                ), updates
+            )
 
-                override fun onDelete(path: String) {
-                    fail("onDelete should never be called")
-                }
-            }, count = 2)
-            assertEquals(listOf("5", "1"), list)
-
-            db.mutatePublishBlocking { tx ->
-                tx.put("/list/3", "/detail/3")
-                tx.put("/detail/3", "3")
-            }
-            assertEquals(listOf("5", "3"), list)
-
-            db.mutatePublishBlocking { tx ->
-                tx.put("/list/6", "/detail/6")
-                tx.put("/detail/6", "6")
-            }
-            assertEquals(listOf("6", "5"), list)
-
-            db.mutatePublishBlocking { tx ->
-                tx.delete("/detail/6")
-            }
-            assertEquals(listOf("5", "3"), list)
-
-            db.mutatePublishBlocking { tx ->
-                tx.delete("/list/5")
-            }
-            assertEquals(listOf("3", "1"), list)
-
-            db.mutatePublishBlocking { tx ->
-                tx.delete("/list/3")
-            }
-            assertEquals(listOf("1"), list)
-
-            db.mutatePublishBlocking { tx ->
-                tx.delete("/list/1")
-            }
-            assertEquals(emptyList<String>(), list)
+            assertEquals(listOf("/list/1"), deletions)
         }
     }
 
@@ -659,9 +588,9 @@ class DBTest {
             try {
                 db.mutatePublishBlocking { tx ->
                     tx.put("path3", "value3")
-                    throw Exception("I failed")
+                    throw IllegalArgumentException("I failed")
                 }
-            } catch (_: Throwable) {
+            } catch (_: IllegalArgumentException) {
                 // ignore exception
             }
         }
@@ -744,7 +673,7 @@ class DBTest {
 
             val updatedKeys = HashSet<String>()
             val listener =
-                SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, key ->
+                SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
                     updatedKeys.add(
                         key!!
                     )
@@ -753,16 +682,20 @@ class DBTest {
 
             prefs.edit().putString("string", "My String").putInt("int", 5).commit()
             assertEquals(mapOf("string" to "My String", "int" to 5), prefs.all)
+            Thread.sleep(500)
             assertEquals(setOf("string", "int"), updatedKeys)
 
             updatedKeys.clear()
             prefs.edit().clear().commit()
             assertEquals(0, prefs.all.size)
+            Thread.sleep(500)
             assertEquals(setOf("string", "int"), updatedKeys)
 
             updatedKeys.clear()
             prefs.unregisterOnSharedPreferenceChangeListener(listener)
             prefs.edit().putString("newstring", "My New String").commit()
+            // wait a little bit for updates
+            Thread.sleep(500)
             assertEquals(0, updatedKeys.size)
         }
     }
@@ -773,12 +706,10 @@ class DBTest {
             val updatedPaths = HashSet<String>()
 
             db.subscribe(object : RawSubscriber<Any>("1", "") {
-                override fun onUpdate(path: String, raw: Raw<Any>) {
-                    updatedPaths.add(path)
-                }
-
-                override fun onDelete(path: String) {
-                    TODO("Not yet implemented")
+                override fun onChanges(changes: RawChangeSet<Any>) {
+                    changes.updates.forEach { (path, value) ->
+                        updatedPaths.add(path)
+                    }
                 }
             }, false)
 
@@ -792,9 +723,9 @@ class DBTest {
                             db.mutatePublishBlocking { subSubNestedTx ->
                                 subSubNestedTx.put("f", "f")
                             }
-                            throw Exception("I failed!")
+                            throw IllegalArgumentException("I failed!")
                         }
-                    } catch (t: Throwable) {
+                    } catch (t: IllegalArgumentException) {
                         // ignore
                     }
                     nestedTx.put("c", "c")

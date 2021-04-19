@@ -2,6 +2,7 @@ package io.lantern.db
 
 import android.content.SharedPreferences
 import java.util.*
+import java.util.concurrent.Executors
 import kotlin.collections.HashMap
 
 /**
@@ -68,18 +69,20 @@ internal class SharedPreferencesAdapter(
 
     override fun registerOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
         val subscriber = object : Subscriber<Any>(UUID.randomUUID().toString(), prefix) {
-            override fun onUpdate(path: String, value: Any) {
-                listener.onSharedPreferenceChanged(
-                    this@SharedPreferencesAdapter,
-                    unprefixedPath(path)
-                )
-            }
+            override fun onChanges(changes: ChangeSet<Any>) {
+                changes.updates.forEach { (path, value) ->
+                    listener.onSharedPreferenceChanged(
+                        this@SharedPreferencesAdapter,
+                        unprefixedPath(path)
+                    )
+                }
 
-            override fun onDelete(path: String) {
-                listener.onSharedPreferenceChanged(
-                    this@SharedPreferencesAdapter,
-                    unprefixedPath(path)
-                )
+                changes.deletions.forEach { path ->
+                    listener.onSharedPreferenceChanged(
+                        this@SharedPreferencesAdapter,
+                        unprefixedPath(path)
+                    )
+                }
             }
         }
         listenerIds.add(ListenerId(listener, subscriber.id))
@@ -171,17 +174,16 @@ internal class SharedPreferencesEditorAdapter(private val adapter: SharedPrefere
     }
 
     override fun commit(): Boolean {
-        apply()
+        adapter.db.mutate { tx ->
+            updates.forEach { it(tx) }
+            updates.clear()
+        }
         return true
     }
 
     override fun apply() {
-        adapter.db.mutate { tx ->
-            updates.forEach { it(tx) }
-        }
-        updates.clear()
+        commit()
     }
-
 }
 
 private data class ListenerId(
