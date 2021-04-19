@@ -103,7 +103,7 @@ abstract class Subscriber<T : Any>(id: String, vararg pathPrefixes: String) :
  */
 abstract class DetailsSubscriber<T : Any>(
     id: String,
-    private vararg val pathPrefixes: String
+    private vararg pathPrefixes: String
 ) : RawSubscriber<Any>(
     id,
     "%"
