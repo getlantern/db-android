@@ -8,7 +8,6 @@ import kotlin.collections.HashMap
  * Allows accessing a DB using the SharedPreferences API.
  *
  * @param db the database in which to store the preferences
- * @param prefix a prefix to prepend to all preference keys before storing them in the database
  * @param initialValues the database will be populated with values from this SharedPreferences for any values that haven't already been set (useful for migrating from a regular SharedPreferences)
  */
 internal class SharedPreferencesAdapter(
