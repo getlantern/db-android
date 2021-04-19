@@ -579,6 +579,54 @@ class DBTest {
     }
 
     @Test
+    fun testSchema() {
+        buildDB().use { parent ->
+            val parentUpdates = HashMap<String, Any>()
+            parent.subscribe(object : Subscriber<Any>("subscriber", "%") {
+                override fun onChanges(changes: ChangeSet<Any>) {
+                    parentUpdates.putAll(changes.updates)
+                }
+            })
+
+            parent.withSchema("child").use { child ->
+                val childUpdates = HashMap<String, Any>()
+                child.subscribe(object : Subscriber<Any>("subscriber", "%") {
+                    override fun onChanges(changes: ChangeSet<Any>) {
+                        childUpdates.putAll(changes.updates)
+                    }
+                })
+
+                parent.mutatePublishBlocking { parentTx ->
+                    parentTx.put("path", "p")
+                    child.mutatePublishBlocking { childTx ->
+                        childTx.put("path", "c")
+                    }
+                }
+
+                assertEquals("parent should have correct value", "p", parent.get<String>("path"))
+                assertEquals("child should have correct value", "c", child.get<String>("path"))
+
+                assertEquals(
+                    "parent subscriber should have gotten relevant updates",
+                    mapOf("path" to "p"),
+                    parentUpdates
+                )
+                assertEquals(
+                    "child subscriber should have gotten relevant updates",
+                    mapOf("path" to "c"),
+                    childUpdates
+                )
+            }
+
+            assertEquals(
+                "parent should still be open and queryable after closing child",
+                "p",
+                parent.get<String>("path")
+            )
+        }
+    }
+
+    @Test
     fun testDurability() {
         buildDB().use { db ->
             db.mutatePublishBlocking { tx ->
@@ -617,12 +665,12 @@ class DBTest {
             .putLong("long", 3).putString("string", "fallbackstring").commit()
         buildDB().use { db ->
             // First set up the preferences without a fallback
-            val initPrefs = db.asSharedPreferences("/prefs/")
+            val initPrefs = db.asSharedPreferences("myprefs")
             initPrefs.edit().putBoolean("boolean", true).putFloat("float", 11.11.toFloat())
                 .putInt("int", 22)
                 .putLong("long", 33).putString("string", "realstring").commit()
             // Now set it up with the fallback (this ensures that we don't overwrite stuff in the database from the fallback)
-            val prefs = db.asSharedPreferences("/prefs/", fallback)
+            val prefs = db.asSharedPreferences("myprefs", fallback)
 
             assertEquals(
                 mapOf(
@@ -639,37 +687,39 @@ class DBTest {
                 ), prefs.all
             )
 
-            assertTrue(db.get("/prefs/boolean") ?: false)
-            assertTrue(prefs.getBoolean("boolean", false))
-            assertTrue(prefs.getBoolean("fboolean", false))
-            assertTrue(prefs.getBoolean("uboolean", true))
+            db.withSchema("myprefs").use { prefsDB ->
+                assertTrue(prefsDB.get("boolean") ?: false)
+                assertTrue(prefs.getBoolean("boolean", false))
+                assertTrue(prefs.getBoolean("fboolean", false))
+                assertTrue(prefs.getBoolean("uboolean", true))
 
-            assertEquals(11.11.toFloat(), db.get<Float>("/prefs/float"))
-            assertEquals(11.11.toFloat(), prefs.getFloat("float", 111.111.toFloat()))
-            assertEquals(1.1.toFloat(), prefs.getFloat("ffloat", 111.111.toFloat()))
-            assertEquals(111.111.toFloat(), prefs.getFloat("ufloat", 111.111.toFloat()))
+                assertEquals(11.11.toFloat(), prefsDB.get<Float>("float"))
+                assertEquals(11.11.toFloat(), prefs.getFloat("float", 111.111.toFloat()))
+                assertEquals(1.1.toFloat(), prefs.getFloat("ffloat", 111.111.toFloat()))
+                assertEquals(111.111.toFloat(), prefs.getFloat("ufloat", 111.111.toFloat()))
 
-            assertEquals(22, db.get<Int>("/prefs/int"))
-            assertEquals(22, prefs.getInt("int", 222))
-            assertEquals(2, prefs.getInt("fint", 222))
-            assertEquals(222, prefs.getInt("uint", 222))
+                assertEquals(22, prefsDB.get<Int>("int"))
+                assertEquals(22, prefs.getInt("int", 222))
+                assertEquals(2, prefs.getInt("fint", 222))
+                assertEquals(222, prefs.getInt("uint", 222))
 
-            assertEquals(33.toLong(), db.get<Long>("/prefs/long"))
-            assertEquals(33.toLong(), prefs.getLong("long", 333))
-            assertEquals(3.toLong(), prefs.getLong("flong", 333))
-            assertEquals(333.toLong(), prefs.getLong("ulong", 333))
+                assertEquals(33.toLong(), prefsDB.get<Long>("long"))
+                assertEquals(33.toLong(), prefs.getLong("long", 333))
+                assertEquals(3.toLong(), prefs.getLong("flong", 333))
+                assertEquals(333.toLong(), prefs.getLong("ulong", 333))
 
-            assertEquals("realstring", db.get<String>("/prefs/string"))
-            assertEquals("realstring", prefs.getString("string", "unknownstring"))
-            assertEquals("fallbackstring", prefs.getString("fstring", "unknownstring"))
-            assertEquals("unknownstring", prefs.getString("ustring", "unknownstring"))
+                assertEquals("realstring", prefsDB.get<String>("string"))
+                assertEquals("realstring", prefs.getString("string", "unknownstring"))
+                assertEquals("fallbackstring", prefs.getString("fstring", "unknownstring"))
+                assertEquals("unknownstring", prefs.getString("ustring", "unknownstring"))
+            }
         }
     }
 
     @Test
     fun testPreferencesListener() {
         buildDB().use { db ->
-            val prefs = db.asSharedPreferences("/prefs/")
+            val prefs = db.asSharedPreferences("prefstest")
 
             val updatedKeys = HashSet<String>()
             val listener =

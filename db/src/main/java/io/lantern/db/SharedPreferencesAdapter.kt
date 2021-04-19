@@ -2,7 +2,6 @@ package io.lantern.db
 
 import android.content.SharedPreferences
 import java.util.*
-import java.util.concurrent.Executors
 import kotlin.collections.HashMap
 
 /**
@@ -14,7 +13,6 @@ import kotlin.collections.HashMap
  */
 internal class SharedPreferencesAdapter(
     val db: DB,
-    val prefix: String,
     initialValues: SharedPreferences?
 ) : SharedPreferences {
     private val listenerIds = Collections.synchronizedList(ArrayList<ListenerId>())
@@ -23,7 +21,7 @@ internal class SharedPreferencesAdapter(
         initialValues?.all?.let {
             db.mutate { tx ->
                 it.forEach { (key, value) ->
-                    value?.let { tx.putIfAbsent(prefixedPath(key), value) }
+                    value?.let { tx.putIfAbsent(key, value) }
                 }
             }
 
@@ -31,12 +29,12 @@ internal class SharedPreferencesAdapter(
     }
 
     override fun getAll(): MutableMap<String, *> {
-        return HashMap(db.list<Any>("${prefix}%").map { unprefixedPath(it.path) to it.value }
+        return HashMap(db.list<Any>("%").map { it.path to it.value }
             .toMap())
     }
 
     override fun getString(key: String, defValue: String?): String? {
-        return db.get(prefixedPath(key)) ?: defValue
+        return db.get(key) ?: defValue
     }
 
     override fun getStringSet(key: String, defValues: MutableSet<String>?): MutableSet<String> {
@@ -44,23 +42,23 @@ internal class SharedPreferencesAdapter(
     }
 
     override fun getInt(key: String, defValue: Int): Int {
-        return db.get(prefixedPath(key)) ?: defValue
+        return db.get(key) ?: defValue
     }
 
     override fun getLong(key: String, defValue: Long): Long {
-        return db.get(prefixedPath(key)) ?: defValue
+        return db.get(key) ?: defValue
     }
 
     override fun getFloat(key: String, defValue: Float): Float {
-        return db.get(prefixedPath(key)) ?: defValue
+        return db.get(key) ?: defValue
     }
 
     override fun getBoolean(key: String, defValue: Boolean): Boolean {
-        return db.get(prefixedPath(key)) ?: defValue
+        return db.get(key) ?: defValue
     }
 
     override fun contains(key: String): Boolean {
-        return db.contains(prefixedPath(key))
+        return db.contains(key)
     }
 
     override fun edit(): SharedPreferences.Editor {
@@ -68,19 +66,19 @@ internal class SharedPreferencesAdapter(
     }
 
     override fun registerOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
-        val subscriber = object : Subscriber<Any>(UUID.randomUUID().toString(), prefix) {
+        val subscriber = object : Subscriber<Any>(UUID.randomUUID().toString(), "%") {
             override fun onChanges(changes: ChangeSet<Any>) {
                 changes.updates.forEach { (path, value) ->
                     listener.onSharedPreferenceChanged(
                         this@SharedPreferencesAdapter,
-                        unprefixedPath(path)
+                        path
                     )
                 }
 
                 changes.deletions.forEach { path ->
                     listener.onSharedPreferenceChanged(
                         this@SharedPreferencesAdapter,
-                        unprefixedPath(path)
+                        path
                     )
                 }
             }
@@ -100,14 +98,6 @@ internal class SharedPreferencesAdapter(
             }
         }
     }
-
-    internal fun prefixedPath(path: String): String {
-        return prefix + path
-    }
-
-    internal fun unprefixedPath(path: String): String {
-        return path.substring(prefix.length)
-    }
 }
 
 internal class SharedPreferencesEditorAdapter(private val adapter: SharedPreferencesAdapter) :
@@ -119,7 +109,7 @@ internal class SharedPreferencesEditorAdapter(private val adapter: SharedPrefere
             remove(key)
         } else {
             updates.add { tx ->
-                tx.put(adapter.prefixedPath(key), value)
+                tx.put(key, value)
             }
         }
         return this
@@ -131,43 +121,43 @@ internal class SharedPreferencesEditorAdapter(private val adapter: SharedPrefere
 
     override fun putInt(key: String, value: Int): SharedPreferences.Editor {
         updates.add { tx ->
-            tx.put(adapter.prefixedPath(key), value)
+            tx.put(key, value)
         }
         return this
     }
 
     override fun putLong(key: String, value: Long): SharedPreferences.Editor {
         updates.add { tx ->
-            tx.put(adapter.prefixedPath(key), value)
+            tx.put(key, value)
         }
         return this
     }
 
     override fun putFloat(key: String, value: Float): SharedPreferences.Editor {
         updates.add { tx ->
-            tx.put(adapter.prefixedPath(key), value)
+            tx.put(key, value)
         }
         return this
     }
 
     override fun putBoolean(key: String, value: Boolean): SharedPreferences.Editor {
         updates.add { tx ->
-            tx.put(adapter.prefixedPath(key), value)
+            tx.put(key, value)
         }
         return this
     }
 
     override fun remove(key: String): SharedPreferences.Editor {
         updates.add { tx ->
-            tx.delete(adapter.prefixedPath(key))
+            tx.delete(key)
         }
         return this
     }
 
     override fun clear(): SharedPreferences.Editor {
         updates.add { tx ->
-            tx.list<Any>("${adapter.prefix}%").forEach { entry ->
-                tx.delete(entry.path)
+            tx.listPaths("%").forEach { path ->
+                tx.delete(path)
             }
         }
         return this
