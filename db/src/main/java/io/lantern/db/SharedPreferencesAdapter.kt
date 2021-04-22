@@ -1,7 +1,8 @@
 package io.lantern.db
 
 import android.content.SharedPreferences
-import java.util.*
+import java.util.Collections
+import java.util.UUID
 import kotlin.collections.HashMap
 
 /**
@@ -23,13 +24,14 @@ internal class SharedPreferencesAdapter(
                     value?.let { tx.putIfAbsent(key, value) }
                 }
             }
-
         }
     }
 
     override fun getAll(): MutableMap<String, *> {
-        return HashMap(db.list<Any>("%").map { it.path to it.value }
-            .toMap())
+        return HashMap(
+            db.list<Any>("%").map { it.path to it.value }
+                .toMap()
+        )
     }
 
     override fun getString(key: String, defValue: String?): String? {

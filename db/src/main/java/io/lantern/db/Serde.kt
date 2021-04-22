@@ -5,7 +5,11 @@ import com.esotericsoftware.kryo.Registration
 import com.esotericsoftware.kryo.io.Input
 import com.esotericsoftware.kryo.io.Output
 import com.google.protobuf.GeneratedMessageLite
-import java.io.*
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.io.InputStream
 import java.nio.charset.Charset
 import java.util.concurrent.ConcurrentHashMap
 
