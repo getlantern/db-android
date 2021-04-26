@@ -3,7 +3,6 @@ package io.lantern.db
 import org.junit.Assert
 import org.junit.Test
 import java.nio.charset.Charset
-import java.util.*
 
 class RawTest {
     @Test
@@ -29,16 +28,11 @@ class RawTest {
         Assert.assertEquals(testMessage, pbufRaw.value)
         val serialized = serde.serialize(testMessage)
         Assert.assertTrue(
-            Arrays.equals(
-                serialized.copyOfRange(3, serialized.size),
-                pbufRaw.valueOrProtoBytes as ByteArray
-            )
+            serialized.copyOfRange(3, serialized.size)
+                .contentEquals(pbufRaw.valueOrProtoBytes as ByteArray)
         )
         Assert.assertTrue(
-            Arrays.equals(
-                serialized.copyOfRange(3, serialized.size),
-                pbufRaw.bytes
-            )
+            serialized.copyOfRange(3, serialized.size).contentEquals(pbufRaw.bytes)
         )
 
         Assert.assertEquals(10, kryoRaw.value)

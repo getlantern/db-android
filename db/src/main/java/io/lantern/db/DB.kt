@@ -11,11 +11,15 @@ import net.sqlcipher.database.SQLiteConstraintException
 import net.sqlcipher.database.SQLiteDatabase
 import java.io.Closeable
 import java.io.File
-import java.util.*
-import java.util.concurrent.*
+import java.util.HashSet
+import java.util.TreeSet
+import java.util.concurrent.Callable
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.collections.ArrayList
-import kotlin.collections.HashMap
 
 data class PathAndValue<T>(val path: String, val value: T)
 
@@ -51,7 +55,7 @@ data class DetailsChangeSet<T : Any>(
  */
 abstract class RawSubscriber<T : Any>(
     internal val id: String,
-    private vararg val pathPrefixes: String
+    vararg pathPrefixes: String
 ) {
     // clean path prefixes in case they included an unnecessary trailing %
     internal val cleanedPathPrefixes = pathPrefixes.map { it.trimEnd('%') }
@@ -116,7 +120,7 @@ abstract class DetailsSubscriber<T : Any>(
     init {
         pathPrefixes.map {
             it.trimEnd('%')
-        }.forEach { path -> subscribedPaths.put(path, true) }
+        }.forEach { path -> subscribedPaths[path] = true }
     }
 
     abstract fun onChanges(changes: DetailsChangeSet<T>)
@@ -128,43 +132,43 @@ abstract class DetailsSubscriber<T : Any>(
             subscribedDetailPathsToOriginalPaths.remove(path)
                 ?.let { originalPath -> deletions.add(originalPath) }
             subscribedPaths.visit(object :
-                RadixTreeVisitor<Boolean, Void?> {
-                override fun visit(key: String?, value: Boolean?): Boolean {
-                    if (key == null || !path.startsWith(key)) {
-                        return false
+                    RadixTreeVisitor<Boolean, Void?> {
+                    override fun visit(key: String?, value: Boolean?): Boolean {
+                        if (key == null || !path.startsWith(key)) {
+                            return false
+                        }
+                        deletions.add(path)
+                        subscribedOriginalPathsToDetailPaths.remove(path)
+                            ?.let { subscribedDetailPathsToOriginalPaths.remove(it) }
+                        return true
                     }
-                    deletions.add(path)
-                    subscribedOriginalPathsToDetailPaths.remove(path)
-                        ?.let { subscribedDetailPathsToOriginalPaths.remove(it) }
-                    return true
-                }
 
-                override fun getResult(): Void? {
-                    return null
-                }
-            })
+                    override fun getResult(): Void? {
+                        return null
+                    }
+                })
         }
 
         // then update our detail subscription paths
         val updatedPaths = HashMap<String, String>()
         changes.updates.forEach { (path, value) ->
             subscribedPaths.visit(object :
-                RadixTreeVisitor<Boolean, Void?> {
-                override fun visit(key: String?, v: Boolean?): Boolean {
-                    if (key == null || !path.startsWith(key)) {
-                        return false
+                    RadixTreeVisitor<Boolean, Void?> {
+                    override fun visit(key: String?, v: Boolean?): Boolean {
+                        if (key == null || !path.startsWith(key)) {
+                            return false
+                        }
+                        val detailPath = value.value as String
+                        subscribedOriginalPathsToDetailPaths[path] = detailPath
+                        subscribedDetailPathsToOriginalPaths[detailPath] = path
+                        updatedPaths[path] = detailPath
+                        return true
                     }
-                    val detailPath = value.value as String
-                    subscribedOriginalPathsToDetailPaths[path] = detailPath
-                    subscribedDetailPathsToOriginalPaths[detailPath] = path
-                    updatedPaths[path] = detailPath
-                    return true
-                }
 
-                override fun getResult(): Void? {
-                    return null
-                }
-            })
+                    override fun getResult(): Void? {
+                        return null
+                    }
+                })
         }
 
         // then capture updates to details
@@ -215,12 +219,12 @@ class DB private constructor(
         ThreadLocal(),
         AtomicInteger(),
         Executors.newSingleThreadExecutor {
-            Thread(it, "${name}-tx-executor")
+            Thread(it, "$name-tx-executor")
         },
         Executors.newSingleThreadExecutor {
-            Thread(it, "${name}-publish-executor")
-        }) {
-    }
+            Thread(it, "$name-publish-executor")
+        }
+    )
 
     init {
         if (schema.contains(Regex("\\s"))) {
@@ -233,13 +237,25 @@ class DB private constructor(
         // external content fts5 table, we include a manually managed INTEGER rowid to which we
         // can join the fts5 virtual table. Rows that are not full text indexed have a null
         // to save space.
-        db.execSQL("CREATE TABLE IF NOT EXISTS ${schema}_data (path TEXT PRIMARY KEY, value BLOB, rowid INTEGER) WITHOUT ROWID")
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS ${schema}_data
+                        (path TEXT PRIMARY KEY, value BLOB, rowid INTEGER) WITHOUT ROWID"""
+        )
         // Create an index on only text values to speed up detail lookups that join on path = value
-        db.execSQL("CREATE INDEX IF NOT EXISTS ${schema}_data_value_index ON ${schema}_data(value) WHERE SUBSTR(CAST(value AS TEXT), 1, 1) = 'T'")
+        db.execSQL(
+            """CREATE INDEX IF NOT EXISTS ${schema}_data_value_index ON ${schema}_data(value)
+                        WHERE SUBSTR(CAST(value AS TEXT), 1, 1) = 'T'"""
+        )
         // Create a table for full text search
-        db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS ${schema}_fts USING fts5(value, content=data, tokenize='porter unicode61')")
+        db.execSQL(
+            """CREATE VIRTUAL TABLE IF NOT EXISTS ${schema}_fts
+                        USING fts5(value, content=data, tokenize='porter unicode61')"""
+        )
         // Create a table for managing custom counters (currently used only for full text indexing)
-        db.execSQL("CREATE TABLE IF NOT EXISTS ${schema}_counters (id INTEGER PRIMARY KEY, value INTEGER)")
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS ${schema}_counters
+                   (id INTEGER PRIMARY KEY, value INTEGER)""".trimMargin()
+        )
     }
 
     /**
@@ -316,9 +332,9 @@ class DB private constructor(
         subscriber: RawSubscriber<T>,
         receiveInitial: Boolean = true
     ) {
-        txExecute(Callable<Unit> {
+        txExecute {
             doSubscribe(subscriber, receiveInitial)
-        })
+        }
     }
 
     private fun <T : Any> doSubscribe(
@@ -341,7 +357,7 @@ class DB private constructor(
             subscribers[pathPrefix] = subscribersForPrefix
 
             if (receiveInitial) {
-                subscriber.onInitial(listRaw<T>("${pathPrefix}%"))
+                subscriber.onInitial(listRaw<T>("$pathPrefix%"))
             }
         }
     }
@@ -363,7 +379,7 @@ class DB private constructor(
         doSubscribe(subscriber, receiveInitial = false)
         if (receiveInitial) {
             subscriber.cleanedPathPrefixes.forEach { pathPrefix ->
-                val list = listDetailsRaw<T>("${pathPrefix}%")
+                val list = listDetailsRaw<T>("$pathPrefix%")
                 val updates = HashMap<String, Raw<Any>>()
                 list.forEach { detail ->
                     // this is the mapping of original path to detail path
@@ -380,18 +396,20 @@ class DB private constructor(
      * Unsubscribes the subscriber identified by subscriberId
      */
     fun unsubscribe(subscriberId: String) {
-        txExecutor.submit(Callable<Unit> {
-            val subscriber = subscribersById.remove(subscriberId)
-            subscriber?.cleanedPathPrefixes?.forEach { pathPrefix ->
-                val subscribersForPrefix =
-                    subscribers[pathPrefix]?.remove(subscriber.id)
-                if (subscribersForPrefix?.size ?: 0 == 0) {
-                    subscribers.remove(pathPrefix)
-                } else {
-                    subscribers[pathPrefix] = subscribersForPrefix
+        txExecutor.submit(
+            Callable<Unit> {
+                val subscriber = subscribersById.remove(subscriberId)
+                subscriber?.cleanedPathPrefixes?.forEach { pathPrefix ->
+                    val subscribersForPrefix =
+                        subscribers[pathPrefix]?.remove(subscriber.id)
+                    if (subscribersForPrefix?.size ?: 0 == 0) {
+                        subscribers.remove(pathPrefix)
+                    } else {
+                        subscribers[pathPrefix] = subscribersForPrefix
+                    }
                 }
             }
-        })
+        )
     }
 
     /**
@@ -408,12 +426,12 @@ class DB private constructor(
     fun <T> mutate(publishBlocking: Boolean = false, fn: (tx: Transaction) -> T): T {
         var inExecutor = false
         val tx = synchronized(this) {
-            val _tx = currentTransaction.get()
-            if (_tx == null) {
+            val currentTx = currentTransaction.get()
+            if (currentTx == null) {
                 Transaction(db, schema, serde, HashMap(mapOf(schema to subscribers)))
             } else {
                 inExecutor = true
-                _tx
+                currentTx
             }
         }
 
@@ -441,18 +459,20 @@ class DB private constructor(
             }
         } else {
             // schedule the work to run in our single threaded executor
-            val future = txExecutor.submit(Callable {
-                try {
-                    db.beginTransaction()
-                    currentTransaction.set(tx)
-                    val result = fn(tx)
-                    db.setTransactionSuccessful()
-                    result
-                } finally {
-                    db.endTransaction()
-                    currentTransaction.remove()
+            val future = txExecutor.submit(
+                Callable {
+                    try {
+                        db.beginTransaction()
+                        currentTransaction.set(tx)
+                        val result = fn(tx)
+                        db.setTransactionSuccessful()
+                        result
+                    } finally {
+                        db.endTransaction()
+                        currentTransaction.remove()
+                    }
                 }
-            })
+            )
             try {
                 val result = future.get()
                 // publish outside of the txExecutor
@@ -580,7 +600,7 @@ open class Queryable internal constructor(
      */
     @Throws(TooManyMatchesException::class)
     fun <T : Any> findOne(pathQuery: String): T? {
-        return findOneRaw<T>(pathQuery)?.let { it.value.value }
+        return findOneRaw<T>(pathQuery)?.value?.value
     }
 
     /**
@@ -774,7 +794,7 @@ open class Queryable internal constructor(
         fullTextSearch: String?,
         reverseSort: Boolean,
         onResult: (listPath: String, detailPath: String, value: ByteArray) -> Unit
-    ): Unit {
+    ) {
         val cursor = if (fullTextSearch != null) {
             db.rawQuery(
                 "SELECT l.path, d.path, d.value FROM ${schema}_data l INNER JOIN ${schema}_data d ON l.value = d.path INNER JOIN ${schema}_fts f ON f.rowid = d.rowid WHERE l.path LIKE ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T' AND f.value MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
@@ -871,7 +891,7 @@ class Transaction internal constructor(
      * @return whatever value is now in the database (either the one gotten or the one put)
      */
     fun <T : Any> getOrPut(path: String, value: T?, fullText: String? = null): T? {
-        return get<T>(path) ?: put(path, value, fullText)
+        return get(path) ?: put(path, value, fullText)
     }
 
     /**
@@ -909,7 +929,7 @@ class Transaction internal constructor(
             }
         }
         db.execSQL(
-            "INSERT INTO ${schema}_data(path, value, rowid) VALUES(?, ?, ?)${onConflictClause}",
+            "INSERT INTO ${schema}_data(path, value, rowid) VALUES(?, ?, ?)$onConflictClause",
             arrayOf(serializedPath, bytes, rowId)
         )
         if (fullText != null) {
@@ -964,58 +984,58 @@ class Transaction internal constructor(
         updatesBySchema.forEach { (schema, updates) ->
             updates.forEach { (path, newValue) ->
                 subscribersBySchema[schema]?.visit(object :
-                    RadixTreeVisitor<PersistentMap<String, RawSubscriber<Any>>, Void?> {
-                    override fun visit(
-                        key: String?,
-                        value: PersistentMap<String, RawSubscriber<Any>>?
-                    ): Boolean {
-                        if (key == null || !path.startsWith(key)) {
-                            return false
-                        }
-                        value?.values?.forEach {
-                            var changes = changesBySubscriber[it]
-                            if (changes == null) {
-                                changes = RawChangeSet(updates = HashMap(), deletions = HashSet())
-                                changesBySubscriber[it] = changes
+                        RadixTreeVisitor<PersistentMap<String, RawSubscriber<Any>>, Void?> {
+                        override fun visit(
+                            key: String?,
+                            value: PersistentMap<String, RawSubscriber<Any>>?
+                        ): Boolean {
+                            if (key == null || !path.startsWith(key)) {
+                                return false
                             }
-                            (changes.updates as MutableMap)[path] = newValue
+                            value?.values?.forEach {
+                                var changes = changesBySubscriber[it]
+                                if (changes == null) {
+                                    changes = RawChangeSet(updates = HashMap(), deletions = HashSet())
+                                    changesBySubscriber[it] = changes
+                                }
+                                (changes.updates as MutableMap)[path] = newValue
+                            }
+                            return true
                         }
-                        return true
-                    }
 
-                    override fun getResult(): Void? {
-                        return null
-                    }
-                })
+                        override fun getResult(): Void? {
+                            return null
+                        }
+                    })
             }
         }
 
         deletionsBySchema.forEach { (schema, deletions) ->
             deletions.forEach { path ->
                 subscribersBySchema[schema]?.visit(object :
-                    RadixTreeVisitor<PersistentMap<String, RawSubscriber<Any>>, Void?> {
-                    override fun visit(
-                        key: String?,
-                        value: PersistentMap<String, RawSubscriber<Any>>?
-                    ): Boolean {
-                        if (key == null || !path.startsWith(key)) {
-                            return false
-                        }
-                        value?.values?.forEach {
-                            var changes = changesBySubscriber[it]
-                            if (changes == null) {
-                                changes = RawChangeSet(updates = HashMap(), deletions = HashSet())
-                                changesBySubscriber[it] = changes!!
+                        RadixTreeVisitor<PersistentMap<String, RawSubscriber<Any>>, Void?> {
+                        override fun visit(
+                            key: String?,
+                            value: PersistentMap<String, RawSubscriber<Any>>?
+                        ): Boolean {
+                            if (key == null || !path.startsWith(key)) {
+                                return false
                             }
-                            (changes!!.deletions as MutableSet).add(path)
+                            value?.values?.forEach {
+                                var changes = changesBySubscriber[it]
+                                if (changes == null) {
+                                    changes = RawChangeSet(updates = HashMap(), deletions = HashSet())
+                                    changesBySubscriber[it] = changes!!
+                                }
+                                (changes!!.deletions as MutableSet).add(path)
+                            }
+                            return true
                         }
-                        return true
-                    }
 
-                    override fun getResult(): Void? {
-                        return null
-                    }
-                })
+                        override fun getResult(): Void? {
+                            return null
+                        }
+                    })
             }
         }
 

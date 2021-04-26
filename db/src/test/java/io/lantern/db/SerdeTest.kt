@@ -1,7 +1,9 @@
 package io.lantern.db
 
 import io.lantern.db.Test.TestMessage
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.nio.charset.Charset
 

@@ -8,14 +8,17 @@ import android.content.SharedPreferences
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
-import java.util.*
-import kotlin.collections.ArrayList
-import kotlin.collections.HashSet
+import java.util.HashMap
+import java.util.Random
 
 @RunWith(AndroidJUnit4::class)
 class DBTest {
@@ -52,7 +55,8 @@ class DBTest {
                     PathAndValue("/messages/b", "Message B"),
                     PathAndValue("/messages/c", "Message C"),
                     PathAndValue("/messages/d", "Message D")
-                ), db.list<String>("/messages/%")
+                ),
+                db.list<String>("/messages/%")
             )
             assertEquals(
                 arrayListOf(
@@ -60,7 +64,8 @@ class DBTest {
                     PathAndValue("/messages/b", Raw(db.serde, "Message B")),
                     PathAndValue("/messages/c", Raw(db.serde, "Message C")),
                     PathAndValue("/messages/d", Raw(db.serde, "Message D"))
-                ), db.listRaw<String>("/messages/%")
+                ),
+                db.listRaw<String>("/messages/%")
             )
 
             assertEquals(
@@ -80,7 +85,8 @@ class DBTest {
                         "/messages/c",
                         "Message C"
                     ),
-                ), db.listDetails<String>(
+                ),
+                db.listDetails<String>(
                     "/contacts/32af234asdf324/messages_by_timestamp/%",
                     0,
                     10,
@@ -95,7 +101,8 @@ class DBTest {
                         "/messages/a",
                         "Message A"
                     ),
-                ), db.listDetails<String>(
+                ),
+                db.listDetails<String>(
                     "/contacts/%/messages_by_timestamp/2",
                     0,
                     10,
@@ -120,7 +127,8 @@ class DBTest {
                         "/messages/c",
                         Raw(db.serde, "Message C")
                     ),
-                ), db.listDetailsRaw<String>(
+                ),
+                db.listDetailsRaw<String>(
                     "/contacts/32af234asdf324/messages_by_timestamp/%",
                     0,
                     10,
@@ -187,7 +195,8 @@ class DBTest {
                     PathAndValue("/messages/b", Message("Message B")),
                     PathAndValue("/messages/c", Message("Message C blah blah")),
                     PathAndValue("/messages/d", Message("Message D blah blah blah"))
-                ), db.list<String>("/messages/%")
+                ),
+                db.list<String>("/messages/%")
             )
 
             assertEquals(
@@ -195,7 +204,8 @@ class DBTest {
                     PathAndValue("/messages/d", Message("Message D blah blah blah")),
                     PathAndValue("/messages/c", Message("Message C blah blah")),
                     PathAndValue("/messages/a", Message("Message A blah"))
-                ), db.list<String>("/%", fullTextSearch = "blah")
+                ),
+                db.list<String>("/%", fullTextSearch = "blah")
             )
 
             assertEquals(
@@ -203,7 +213,8 @@ class DBTest {
                     Detail("/list/4", "/messages/d", Message("Message D blah blah blah")),
                     Detail("/list/3", "/messages/c", Message("Message C blah blah")),
                     Detail("/list/1", "/messages/a", Message("Message A blah"))
-                ), db.listDetails<String>("/list/%", fullTextSearch = "blah")
+                ),
+                db.listDetails<String>("/list/%", fullTextSearch = "blah")
             )
 
             // now delete
@@ -219,9 +230,9 @@ class DBTest {
             assertEquals(
                 arrayListOf(
                     PathAndValue("/messages/a", Message("Message A blah"))
-                ), db.list<String>("/%", fullTextSearch = "blah")
+                ),
+                db.list<String>("/%", fullTextSearch = "blah")
             )
-
         }
     }
 
@@ -322,19 +333,19 @@ class DBTest {
                 // note the use of a gratuitous trailing % which will be ignored
                 "path%"
             ) {
-                override fun onInitial(values: List<PathAndValue<Raw<String>>>) {
-                    assertEquals(1, values.size)
-                    assertEquals("path", values[0].path)
-                    assertEquals("the value", values[0].value.value)
-                }
-
-                override fun onChanges(changes: ChangeSet<String>) {
-                    changes.updates.forEach { (path, value) ->
-                        assertEquals("path", path)
-                        assertEquals("new value", value)
+                    override fun onInitial(values: List<PathAndValue<Raw<String>>>) {
+                        assertEquals(1, values.size)
+                        assertEquals("path", values[0].path)
+                        assertEquals("the value", values[0].value.value)
                     }
-                }
-            })
+
+                    override fun onChanges(changes: ChangeSet<String>) {
+                        changes.updates.forEach { (path, value) ->
+                            assertEquals("path", path)
+                            assertEquals("new value", value)
+                        }
+                    }
+                })
 
             theValue = "new value"
             db.mutatePublishBlocking { tx ->
@@ -417,24 +428,32 @@ class DBTest {
 
             var updateCalled = false
             var deleteCalled = false
-            db.subscribe(object : Subscriber<String>("100", "/path") {
-                override fun onChanges(changes: ChangeSet<String>) {
-                    changes.updates.forEach { (path, value) ->
-                        assertEquals("/path/3", path)
-                        assertEquals("3", value)
-                        updateCalled = true
+            db.subscribe(
+                object : Subscriber<String>("100", "/path") {
+                    override fun onChanges(changes: ChangeSet<String>) {
+                        changes.updates.forEach { (path, value) ->
+                            assertEquals("/path/3", path)
+                            assertEquals("3", value)
+                            updateCalled = true
+                        }
+                        changes.deletions.forEach { _ -> deleteCalled = true }
                     }
-                    changes.deletions.forEach { _ -> deleteCalled = true }
-                }
-            }, receiveInitial = false)
-            db.subscribe(object : Subscriber<String>("101", "/pa/") {
-                override fun onChanges(changes: ChangeSet<String>) {
-                    changes.updates.forEach { _ ->
-                        fail("subscriber with no common prefix shouldn't get updates")
+                },
+                receiveInitial = false
+            )
+            db.subscribe(
+                object : Subscriber<String>("101", "/pa/") {
+                    override fun onChanges(changes: ChangeSet<String>) {
+                        changes.updates.forEach { _ ->
+                            fail("subscriber with no common prefix shouldn't get updates")
+                        }
+                        changes.deletions.forEach { _ ->
+                            fail("subscriber with no common prefix shouldn't get deletions")
+                        }
                     }
-                    changes.deletions.forEach { fail("subscriber with no common prefix shouldn't get deletions") }
-                }
-            }, receiveInitial = false)
+                },
+                receiveInitial = false
+            )
 
             db.mutatePublishBlocking { tx ->
                 tx.delete("/path/1")
@@ -526,7 +545,8 @@ class DBTest {
                     PathAndValue("/list/2", PathAndValue("/detail/1", "1")),
                     PathAndValue("/list/2", PathAndValue("/detail/1", "11")),
                     PathAndValue("/list/3", PathAndValue("/detail/3", "3")),
-                ), updates
+                ),
+                updates
             )
 
             assertEquals(setOf("/list/1", "/list/2"), deletions)
@@ -539,15 +559,18 @@ class DBTest {
             val updates = ArrayList<PathAndValue<PathAndValue<String>>>()
             val deletions = ArrayList<String>()
 
-            db.subscribe(object : DetailsSubscriber<String>("100", "/list/") {
-                override fun onChanges(changes: DetailsChangeSet<String>) {
-                    changes.updates.forEach { (path, value) ->
-                        updates.add(PathAndValue(path, PathAndValue(value.path, value.value.value)))
-                    }
+            db.subscribe(
+                object : DetailsSubscriber<String>("100", "/list/") {
+                    override fun onChanges(changes: DetailsChangeSet<String>) {
+                        changes.updates.forEach { (path, value) ->
+                            updates.add(PathAndValue(path, PathAndValue(value.path, value.value.value)))
+                        }
 
-                    changes.deletions.forEach { path -> deletions.add(path) }
-                }
-            }, receiveInitial = false)
+                        changes.deletions.forEach { path -> deletions.add(path) }
+                    }
+                },
+                receiveInitial = false
+            )
 
             db.mutatePublishBlocking { tx ->
                 tx.putAll(
@@ -571,7 +594,8 @@ class DBTest {
                 listOf(
                     PathAndValue("/list/1", PathAndValue("/detail", "1")),
                     PathAndValue("/list/2", PathAndValue("/detail", "3")),
-                ), updates
+                ),
+                updates
             )
 
             assertEquals(listOf("/list/1"), deletions)
@@ -684,7 +708,8 @@ class DBTest {
                     "int" to 22,
                     "long" to 33.toLong(),
                     "string" to "realstring"
-                ), prefs.all
+                ),
+                prefs.all
             )
 
             db.withSchema("myprefs").use { prefsDB ->
@@ -755,13 +780,16 @@ class DBTest {
         buildDB().use { db ->
             val updatedPaths = HashSet<String>()
 
-            db.subscribe(object : RawSubscriber<Any>("1", "") {
-                override fun onChanges(changes: RawChangeSet<Any>) {
-                    changes.updates.forEach { (path, value) ->
-                        updatedPaths.add(path)
+            db.subscribe(
+                object : RawSubscriber<Any>("1", "") {
+                    override fun onChanges(changes: RawChangeSet<Any>) {
+                        changes.updates.forEach { (path, value) ->
+                            updatedPaths.add(path)
+                        }
                     }
-                }
-            }, false)
+                },
+                false
+            )
 
             val result = db.mutatePublishBlocking { tx ->
                 tx.put("a", "a") // this should persist to the db

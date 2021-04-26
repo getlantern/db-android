@@ -15,7 +15,8 @@ class Raw<T : Any> internal constructor(
     internal constructor(serde: Serde, bytes: ByteArray) : this(
         serde,
         bytes,
-        lazy { serde.deserialize(bytes) })
+        lazy { serde.deserialize(bytes) }
+    )
 
     internal constructor(serde: Serde, bytes: ByteArray, value: T) : this(
         serde,
