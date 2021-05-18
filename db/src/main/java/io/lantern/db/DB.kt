@@ -498,7 +498,7 @@ class DB private constructor(
     fun asSharedPreferences(
         schema: String,
         fallback: SharedPreferences? = null
-    ): SharedPreferences {
+    ): SharedPreferencesAdapter {
         return SharedPreferencesAdapter(this.withSchema(schema), fallback)
     }
 

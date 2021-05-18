@@ -11,7 +11,7 @@ import kotlin.collections.HashMap
  * @param db the database in which to store the preferences
  * @param initialValues the database will be populated with values from this SharedPreferences for any values that haven't already been set (useful for migrating from a regular SharedPreferences)
  */
-internal class SharedPreferencesAdapter(
+class SharedPreferencesAdapter(
     val db: DB,
     initialValues: SharedPreferences?
 ) : SharedPreferences {
