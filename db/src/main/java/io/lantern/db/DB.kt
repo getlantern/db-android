@@ -205,19 +205,22 @@ class TooManyMatchesException : Exception("More than one value matched path quer
 class DB private constructor(
     db: SQLiteDatabase,
     schema: String,
+    serde: Serde,
     private val currentTransaction: ThreadLocal<Transaction>,
     private val savepointSequence: AtomicInteger,
     private val txExecutor: ExecutorService,
     private val publishExecutor: ExecutorService,
-    private val derived: Boolean = false
+    private val derived: Boolean = false,
 ) :
-    Queryable(db, schema, Serde()), Closeable {
+    Queryable(db, schema, serde), Closeable {
     private val subscribersBySync = HashMap<Boolean, RadixTree<PersistentMap<String, RawSubscriber<Any>>>>()
     private val subscribersBySyncAndId = HashMap<Boolean, ConcurrentHashMap<String, RawSubscriber<Any>>>()
+    private val serdesBySchema: ConcurrentHashMap<String, Serde> = ConcurrentHashMap()
 
     private constructor(db: SQLiteDatabase, schema: String, name: String) : this(
         db,
         schema,
+        Serde(),
         ThreadLocal(),
         AtomicInteger(),
         Executors.newSingleThreadExecutor {
@@ -269,16 +272,28 @@ class DB private constructor(
      * Returns a DB backed by the same underlying SQLLite database, but saving data in its own set
      * of tables (a "schema").
      */
+    @Synchronized
     fun withSchema(schema: String) =
         DB(
             db,
             schema,
+            serdeForSchema(schema),
             currentTransaction,
             savepointSequence,
             txExecutor,
             publishExecutor,
-            derived = true
+            derived = true,
         )
+
+    @Synchronized
+    private fun serdeForSchema(schema: String): Serde {
+        var serde = serdesBySchema[schema]
+        if (serde == null) {
+            serde = Serde()
+            serdesBySchema[schema] = serde
+        }
+        return serde
+    }
 
     companion object {
         /**

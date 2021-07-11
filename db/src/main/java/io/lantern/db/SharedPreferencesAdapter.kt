@@ -14,7 +14,7 @@ import kotlin.collections.HashMap
  * @param initialValues the database will be populated with values from this SharedPreferences for any values that haven't already been set (useful for migrating from a regular SharedPreferences)
  */
 class SharedPreferencesAdapter(
-    val db: DB,
+    internal val db: DB,
     initialValues: SharedPreferences?
 ) : SharedPreferences {
     private val listenerIds = Collections.synchronizedList(ArrayList<ListenerId>())
@@ -31,6 +31,11 @@ class SharedPreferencesAdapter(
             synchronous = true
         )
 
+        /**
+         * Synchronously subscribe to all changes in the schema for these SharedPreferences. That
+         * way, however the underlying properties are updated, the cache will always be up-to-date
+         * with the latest committed values.
+         */
         initialValues?.all?.let {
             db.mutate { tx ->
                 it.forEach { (key, value) ->
