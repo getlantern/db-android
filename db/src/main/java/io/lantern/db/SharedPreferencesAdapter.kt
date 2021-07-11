@@ -3,21 +3,39 @@ package io.lantern.db
 import android.content.SharedPreferences
 import java.util.Collections
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.collections.HashMap
 
 /**
- * Allows accessing a DB using the SharedPreferences API.
+ * Allows accessing a DB using the SharedPreferences API. Values are cached in memory for lighter
+ * weight reads.
  *
  * @param db the database in which to store the preferences
  * @param initialValues the database will be populated with values from this SharedPreferences for any values that haven't already been set (useful for migrating from a regular SharedPreferences)
  */
 class SharedPreferencesAdapter(
-    val db: DB,
+    internal val db: DB,
     initialValues: SharedPreferences?
 ) : SharedPreferences {
     private val listenerIds = Collections.synchronizedList(ArrayList<ListenerId>())
+    private val cache = ConcurrentHashMap<String, Any?>()
 
     init {
+        db.subscribe(
+            object : Subscriber<Any>(UUID.randomUUID().toString(), "") {
+                override fun onChanges(changes: ChangeSet<Any>) {
+                    changes.updates.forEach { cache[it.key] = it.value }
+                    changes.deletions.forEach { cache.remove(it) }
+                }
+            },
+            synchronous = true
+        )
+
+        /**
+         * Synchronously subscribe to all changes in the schema for these SharedPreferences. That
+         * way, however the underlying properties are updated, the cache will always be up-to-date
+         * with the latest committed values.
+         */
         initialValues?.all?.let {
             db.mutate { tx ->
                 it.forEach { (key, value) ->
@@ -28,14 +46,11 @@ class SharedPreferencesAdapter(
     }
 
     override fun getAll(): MutableMap<String, *> {
-        return HashMap(
-            db.list<Any>("%").map { it.path to it.value }
-                .toMap()
-        )
+        return HashMap(cache)
     }
 
     override fun getString(key: String, defValue: String?): String? {
-        return db.get(key) ?: defValue
+        return cache[key]?.let { it as String } ?: defValue
     }
 
     override fun getStringSet(key: String, defValues: MutableSet<String>?): MutableSet<String> {
@@ -43,23 +58,39 @@ class SharedPreferencesAdapter(
     }
 
     override fun getInt(key: String, defValue: Int): Int {
-        return db.get(key) ?: defValue
+        var value = cache[key!!] ?: defValue
+        return when (value) {
+            is Number -> value.toInt()
+            is String -> value.toInt()
+            else -> throw ClassCastException("$value cannot be cast to Int")
+        }
     }
 
     override fun getLong(key: String, defValue: Long): Long {
-        return db.get(key) ?: defValue
+        var value = cache[key!!] ?: defValue
+        return when (value) {
+            is Number -> value.toLong()
+            is String -> value.toLong()
+            else -> throw ClassCastException("$value cannot be cast to Long")
+        }
     }
 
     override fun getFloat(key: String, defValue: Float): Float {
-        return db.get(key) ?: defValue
+        return cache[key]?.let { it as Float } ?: defValue
     }
 
     override fun getBoolean(key: String, defValue: Boolean): Boolean {
-        return db.get(key) ?: defValue
+        var value = cache[key!!] ?: defValue
+        return when (value) {
+            is Boolean -> value
+            is Number -> value.toInt() == 1
+            is String -> value.toBoolean()
+            else -> throw ClassCastException("$value cannot be cast to Boolean")
+        }
     }
 
     override fun contains(key: String): Boolean {
-        return db.contains(key)
+        return cache.contains(key)
     }
 
     override fun edit(): SharedPreferences.Editor {
