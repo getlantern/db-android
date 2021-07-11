@@ -5,6 +5,7 @@ package io.lantern.db
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
@@ -683,14 +684,16 @@ class DBTest {
                 "testPreferences",
                 Context.MODE_PRIVATE
             )
-        fallback.edit().putBoolean("fboolean", true).putFloat("ffloat", 1.1.toFloat())
+        fallback.edit().clear().commit()
+        fallback.edit().putBoolean("fboolean", true).putFloat("ffloat", 1.1f)
             .putInt("fint", 2).putLong("flong", 3).putString("fstring", "fallbackstring")
-            .putBoolean("boolean", true).putFloat("float", 1.1.toFloat()).putInt("int", 2)
-            .putLong("long", 3).putString("string", "fallbackstring").commit()
+            .putBoolean("boolean", true).putFloat("float", 1.1f).putInt("int", 2)
+            .putLong("long", 3).putString("string", "fallbackstring")
+            .putInt("intboolean", 1).putLong("longboolean", 1).putString("stringboolean", "true").commit()
         buildDB().use { db ->
             // First set up the preferences without a fallback
             val initPrefs = db.asSharedPreferences("myprefs")
-            initPrefs.edit().putBoolean("boolean", true).putFloat("float", 11.11.toFloat())
+            initPrefs.edit().putBoolean("boolean", true).putFloat("float", 11.11f)
                 .putInt("int", 22)
                 .putLong("long", 33).putString("string", "realstring").commit()
             // Now set it up with the fallback (this ensures that we don't overwrite stuff in the database from the fallback)
@@ -699,15 +702,18 @@ class DBTest {
             assertEquals(
                 mapOf(
                     "fboolean" to true,
-                    "ffloat" to 1.1.toFloat(),
+                    "ffloat" to 1.1f,
                     "fint" to 2,
-                    "flong" to 3.toLong(),
+                    "flong" to 3L,
                     "fstring" to "fallbackstring",
                     "boolean" to true,
-                    "float" to 11.11.toFloat(),
+                    "float" to 11.11f,
                     "int" to 22,
-                    "long" to 33.toLong(),
-                    "string" to "realstring"
+                    "long" to 33L,
+                    "string" to "realstring",
+                    "intboolean" to 1,
+                    "longboolean" to 1L,
+                    "stringboolean" to "true"
                 ),
                 prefs.all
             )
@@ -717,21 +723,24 @@ class DBTest {
                 assertTrue(prefs.getBoolean("boolean", false))
                 assertTrue(prefs.getBoolean("fboolean", false))
                 assertTrue(prefs.getBoolean("uboolean", true))
+                assertTrue(prefs.getBoolean("intboolean", true))
+                assertTrue(prefs.getBoolean("longboolean", true))
+                assertTrue(prefs.getBoolean("stringboolean", true))
 
-                assertEquals(11.11.toFloat(), prefsDB.get<Float>("float"))
-                assertEquals(11.11.toFloat(), prefs.getFloat("float", 111.111.toFloat()))
-                assertEquals(1.1.toFloat(), prefs.getFloat("ffloat", 111.111.toFloat()))
-                assertEquals(111.111.toFloat(), prefs.getFloat("ufloat", 111.111.toFloat()))
+                assertEquals(11.11f, prefsDB.get<Float>("float"))
+                assertEquals(11.11f, prefs.getFloat("float", 111.111f))
+                assertEquals(1.1f, prefs.getFloat("ffloat", 111.111f))
+                assertEquals(111.111f, prefs.getFloat("ufloat", 111.111f))
 
                 assertEquals(22, prefsDB.get<Int>("int"))
                 assertEquals(22, prefs.getInt("int", 222))
                 assertEquals(2, prefs.getInt("fint", 222))
                 assertEquals(222, prefs.getInt("uint", 222))
 
-                assertEquals(33.toLong(), prefsDB.get<Long>("long"))
-                assertEquals(33.toLong(), prefs.getLong("long", 333))
-                assertEquals(3.toLong(), prefs.getLong("flong", 333))
-                assertEquals(333.toLong(), prefs.getLong("ulong", 333))
+                assertEquals(33L, prefsDB.get<Long>("long"))
+                assertEquals(33L, prefs.getLong("long", 333))
+                assertEquals(3L, prefs.getLong("flong", 333))
+                assertEquals(333L, prefs.getLong("ulong", 333))
 
                 assertEquals("realstring", prefsDB.get<String>("string"))
                 assertEquals("realstring", prefs.getString("string", "unknownstring"))
