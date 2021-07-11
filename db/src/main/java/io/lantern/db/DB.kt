@@ -21,6 +21,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
+private val trueAndFalse = arrayOf(false, true)
+
 data class PathAndValue<T>(val path: String, val value: T)
 
 data class Detail<T>(val path: String, val detailPath: String, val value: T)
@@ -210,8 +212,8 @@ class DB private constructor(
     private val derived: Boolean = false
 ) :
     Queryable(db, schema, Serde()), Closeable {
-    private val subscribers = RadixTree<PersistentMap<String, RawSubscriber<Any>>>()
-    private val subscribersById = ConcurrentHashMap<String, RawSubscriber<Any>>()
+    private val subscribersBySync = HashMap<Boolean, RadixTree<PersistentMap<String, RawSubscriber<Any>>>>()
+    private val subscribersBySyncAndId = HashMap<Boolean, ConcurrentHashMap<String, RawSubscriber<Any>>>()
 
     private constructor(db: SQLiteDatabase, schema: String, name: String) : this(
         db,
@@ -230,6 +232,11 @@ class DB private constructor(
         if (schema.contains(Regex("\\s"))) {
             throw IllegalArgumentException("database name must not contain whitespace")
         }
+
+        subscribersBySync[false] = RadixTree<PersistentMap<String, RawSubscriber<Any>>>()
+        subscribersBySync[true] = RadixTree<PersistentMap<String, RawSubscriber<Any>>>()
+        subscribersBySyncAndId[false] = ConcurrentHashMap<String, RawSubscriber<Any>>()
+        subscribersBySyncAndId[true] = ConcurrentHashMap<String, RawSubscriber<Any>>()
 
         // All data is stored in a single table that has a TEXT path, a BLOB value. The table is
         // stored as an index organized table (WITHOUT ROWID option) as a performance
@@ -327,20 +334,27 @@ class DB private constructor(
      * Registers a subscriber for any updates to the paths matching its pathPrefix.
      *
      * If receiveInitial is true, the subscriber will immediately be called for all matching values.
+     * If synchronous is true, subscribers will be notified within the same thread as the executing
+     * transaction, otherwise they'll be notified asynchronously on a separate thread.
      */
     fun <T : Any> subscribe(
         subscriber: RawSubscriber<T>,
-        receiveInitial: Boolean = true
+        receiveInitial: Boolean = true,
+        synchronous: Boolean = false,
     ) {
         txExecute {
-            doSubscribe(subscriber, receiveInitial)
+            doSubscribe(subscriber, receiveInitial, synchronous)
         }
     }
 
     private fun <T : Any> doSubscribe(
         subscriber: RawSubscriber<T>,
-        receiveInitial: Boolean = true
+        receiveInitial: Boolean = true,
+        synchronous: Boolean = false,
     ) {
+        val subscribers = subscribersBySync[synchronous]!!
+        val subscribersById = subscribersBySyncAndId[synchronous]!!
+
         if (subscribersById.putIfAbsent(
                 subscriber.id,
                 subscriber as RawSubscriber<Any>
@@ -398,14 +412,19 @@ class DB private constructor(
     fun unsubscribe(subscriberId: String) {
         txExecutor.submit(
             Callable<Unit> {
-                val subscriber = subscribersById.remove(subscriberId)
-                subscriber?.cleanedPathPrefixes?.forEach { pathPrefix ->
-                    val subscribersForPrefix =
-                        subscribers[pathPrefix]?.remove(subscriber.id)
-                    if (subscribersForPrefix?.size ?: 0 == 0) {
-                        subscribers.remove(pathPrefix)
-                    } else {
-                        subscribers[pathPrefix] = subscribersForPrefix
+                trueAndFalse.forEach { synchronous ->
+                    val subscribers = subscribersBySync[synchronous]!!
+                    val subscribersById = subscribersBySyncAndId[synchronous]!!
+
+                    val subscriber = subscribersById.remove(subscriberId)
+                    subscriber?.cleanedPathPrefixes?.forEach { pathPrefix ->
+                        val subscribersForPrefix =
+                            subscribers[pathPrefix]?.remove(subscriber.id)
+                        if (subscribersForPrefix?.size ?: 0 == 0) {
+                            subscribers.remove(pathPrefix)
+                        } else {
+                            subscribers[pathPrefix] = subscribersForPrefix
+                        }
                     }
                 }
             }
@@ -428,7 +447,12 @@ class DB private constructor(
         val tx = synchronized(this) {
             val currentTx = currentTransaction.get()
             if (currentTx == null) {
-                Transaction(db, schema, serde, HashMap(mapOf(schema to subscribers)))
+                Transaction(
+                    db, schema, serde,
+                    subscribersBySync.map { (synchronous, subscribers) ->
+                        synchronous to HashMap(mapOf(schema to subscribers))
+                    }.toMap()
+                )
             } else {
                 inExecutor = true
                 currentTx
@@ -437,12 +461,14 @@ class DB private constructor(
 
         return if (inExecutor) {
             // we're already in the executor thread, do the work with a savepoint
-            tx.subscribersBySchema[schema] = subscribers
+            subscribersBySync.forEach { (synchronous, subscribers) ->
+                tx.subscribersBySyncAndSchema[synchronous]!![schema] = subscribers
+            }
             val nestedTx = Transaction(
                 db,
                 schema,
                 serde,
-                tx.subscribersBySchema,
+                tx.subscribersBySyncAndSchema,
                 tx.updatesBySchema,
                 tx.deletionsBySchema,
                 "save_${savepointSequence.incrementAndGet()}"
@@ -465,6 +491,8 @@ class DB private constructor(
                         db.beginTransaction()
                         currentTransaction.set(tx)
                         val result = fn(tx)
+                        // publish to synchronous subscribers inside of the transaction
+                        tx.publish(true)
                         db.setTransactionSuccessful()
                         result
                     } finally {
@@ -475,8 +503,8 @@ class DB private constructor(
             )
             try {
                 val result = future.get()
-                // publish outside of the txExecutor
-                val publishResult = publishExecutor.submit { tx.publish() }
+                // publish to asynchronous subscribers outside of the txExecutor
+                val publishResult = publishExecutor.submit { tx.publish(false) }
                 if (publishBlocking) {
                     publishResult.get()
                 }
@@ -825,7 +853,7 @@ class Transaction internal constructor(
     db: SQLiteDatabase,
     schema: String,
     serde: Serde,
-    internal val subscribersBySchema: HashMap<String, RadixTree<PersistentMap<String, RawSubscriber<Any>>>>,
+    internal val subscribersBySyncAndSchema: Map<Boolean, HashMap<String, RadixTree<PersistentMap<String, RawSubscriber<Any>>>>>,
     private val parentUpdatesBySchema: HashMap<String, HashMap<String, Raw<Any>>>? = null,
     private val parentDeletionsBySchema: HashMap<String, TreeSet<String>>? = null,
     private val savepoint: String? = null,
@@ -978,7 +1006,8 @@ class Transaction internal constructor(
         delete<Any>(path, null)
     }
 
-    internal fun publish() {
+    internal fun publish(synchronous: Boolean) {
+        val subscribersBySchema = subscribersBySyncAndSchema[synchronous]!!
         val changesBySubscriber = HashMap<RawSubscriber<Any>, RawChangeSet<Any>>()
 
         updatesBySchema.forEach { (schema, updates) ->
@@ -995,7 +1024,8 @@ class Transaction internal constructor(
                             value?.values?.forEach {
                                 var changes = changesBySubscriber[it]
                                 if (changes == null) {
-                                    changes = RawChangeSet(updates = HashMap(), deletions = HashSet())
+                                    changes =
+                                        RawChangeSet(updates = HashMap(), deletions = HashSet())
                                     changesBySubscriber[it] = changes
                                 }
                                 (changes.updates as MutableMap)[path] = newValue
@@ -1024,7 +1054,8 @@ class Transaction internal constructor(
                             value?.values?.forEach {
                                 var changes = changesBySubscriber[it]
                                 if (changes == null) {
-                                    changes = RawChangeSet(updates = HashMap(), deletions = HashSet())
+                                    changes =
+                                        RawChangeSet(updates = HashMap(), deletions = HashSet())
                                     changesBySubscriber[it] = changes!!
                                 }
                                 (changes!!.deletions as MutableSet).add(path)
