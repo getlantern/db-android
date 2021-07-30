@@ -535,14 +535,12 @@ class DB private constructor(
     /**
      * Returns a SharedPreferences backed by this db.
      *
-     * @param schema - preference keys are stored in this named schema
      * @param fallback - an optional fallback SharedPreferences to use for values that aren't found in the db
      */
     fun asSharedPreferences(
-        schema: String,
         fallback: SharedPreferences? = null
     ): SharedPreferencesAdapter {
-        return SharedPreferencesAdapter(this.withSchema(schema), fallback)
+        return SharedPreferencesAdapter(this, fallback)
     }
 
     private fun <T> txExecute(cmd: Callable<T>): T {
