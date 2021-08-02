@@ -692,12 +692,13 @@ class DBTest {
             .putInt("intboolean", 1).putLong("longboolean", 1).putString("stringboolean", "true").commit()
         buildDB().use { db ->
             // First set up the preferences without a fallback
-            val initPrefs = db.asSharedPreferences("myprefs")
+            val prefsDb = db.withSchema("myprefs")
+            val initPrefs = prefsDb.asSharedPreferences()
             initPrefs.edit().putBoolean("boolean", true).putFloat("float", 11.11f)
                 .putInt("int", 22)
                 .putLong("long", 33).putString("string", "realstring").commit()
             // Now set it up with the fallback (this ensures that we don't overwrite stuff in the database from the fallback)
-            val prefs = db.asSharedPreferences("myprefs", fallback)
+            val prefs = prefsDb.asSharedPreferences(fallback)
 
             assertEquals(
                 mapOf(
@@ -753,7 +754,7 @@ class DBTest {
     @Test
     fun testPreferencesListener() {
         buildDB().use { db ->
-            val prefs = db.asSharedPreferences("prefstest")
+            val prefs = db.withSchema("prefstest").asSharedPreferences()
 
             val updatedKeys = HashSet<String>()
             val listener =
