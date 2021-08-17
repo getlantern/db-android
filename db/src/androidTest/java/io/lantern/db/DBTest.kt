@@ -834,7 +834,7 @@ class DBTest {
     private fun buildDB(): DB {
         val db = DB.createOrOpen(
             InstrumentationRegistry.getInstrumentation().targetContext,
-            filePath = File(tempDir, "testdb").toString(),
+            filePath = File(File(tempDir, "dbdir"), "testdb").absolutePath,
             password = "testpassword",
         )
         db.registerType(20, Message::class.java)

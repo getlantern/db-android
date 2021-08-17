@@ -301,30 +301,39 @@ class DB private constructor(
          *
          * collectionName - the name of the map as stored in the database
          * password - the password used to encrypted the data (the longer the better)
+         * enableWAL - if true, the database will use write-ahead logging mode, defaults to true
+         * secureDelete - if true, secure deletion is used, defaults to true
+         * exclusiveLocking - if true, the database is opened in exclusive mode, defaults to true
          */
         fun createOrOpen(
             ctx: Context,
             filePath: String,
             password: String,
+            enableWAL: Boolean = true,
             secureDelete: Boolean = true,
+            exclusiveLocking: Boolean = true,
             schema: String = "default",
             name: String = File(filePath).name
         ): DB {
-            // TODO: if the process crashes in the middle of creating the DB, the next time we start
-            // up we can get SQLiteException: file is not a database android. We should try to clean
-            // this up automatically, but be careful to not delete legitimate data in case it was
-            // corrupted in a different way.
             SQLiteDatabase.loadLibs(ctx)
+            File(filePath).parentFile.mkdirs()
             val db = SQLiteDatabase.openOrCreateDatabase(filePath, password, null)
-            if (!db.enableWriteAheadLogging()) {
-                throw RuntimeException("Unable to enable write ahead logging")
+            val lockMode = if (exclusiveLocking) "EXCLUSIVE" else "NORMAL"
+            db.query("PRAGMA locking_mode=$lockMode").use { cursor ->
+                if (cursor == null || !cursor.moveToNext()) {
+                    throw RuntimeException("Unable to configure locking mode")
+                }
             }
-            if (secureDelete) {
-                // Enable secure delete
-                db.query("PRAGMA secure_delete;").use { cursor ->
-                    if (cursor == null || !cursor.moveToNext()) {
-                        throw RuntimeException("Unable to enable secure delete")
-                    }
+            if (enableWAL) {
+                if (!db.enableWriteAheadLogging()) {
+                    throw RuntimeException("Unable to enable write ahead logging")
+                }
+            } else {
+                db.disableWriteAheadLogging()
+            }
+            db.query("PRAGMA secure_delete=$secureDelete").use { cursor ->
+                if (cursor == null || !cursor.moveToNext()) {
+                    throw RuntimeException("Unable to configure secure delete")
                 }
             }
             return DB(db, schema, name)
