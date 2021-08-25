@@ -197,7 +197,7 @@ class DBTest {
                     PathAndValue("/messages/c", Message("Message C blah blah")),
                     PathAndValue("/messages/d", Message("Message D blah blah blah"))
                 ),
-                db.list<String>("/messages/%")
+                db.list<Message>("/messages/%")
             )
 
             assertEquals(
@@ -206,7 +206,7 @@ class DBTest {
                     PathAndValue("/messages/c", Message("Message C blah blah")),
                     PathAndValue("/messages/a", Message("Message A blah"))
                 ),
-                db.list<String>("/%", fullTextSearch = "blah")
+                db.list<Message>("/%", fullTextSearch = "blah")
             )
 
             assertEquals(
@@ -215,13 +215,25 @@ class DBTest {
                     Detail("/list/3", "/messages/c", Message("Message C blah blah")),
                     Detail("/list/1", "/messages/a", Message("Message A blah"))
                 ),
-                db.listDetails<String>("/list/%", fullTextSearch = "blah")
+                db.listDetails<Message>("/list/%", fullTextSearch = "blah")
+            )
+
+            // test prefix match with highlighting
+            assertEquals(
+                arrayListOf(
+                    PathAndValue("/messages/d", Message("Message D *bla*h *bla*h *bla*h")),
+                    PathAndValue("/messages/c", Message("Message C *bla*h *bla*h")),
+                    PathAndValue("/messages/a", Message("Message A *bla*h"))
+                ),
+                db.list<Message>("/%", fullTextSearch = "bla*") { msg, highlight ->
+                    Message(highlight(msg.body))
+                }
             )
 
             // now delete
             db.mutatePublishBlocking { tx ->
                 // delete an entry including the full text index
-                tx.delete("/messages/d", extractFullText = { msg: Message -> msg.body })
+                tx.delete("/messages/d")
                 // add the entry back without full-text indexing to make sure it doesn't show up in results
                 tx.put("/messages/d", Message("Message D blah blah blah"))
                 // delete another entry without deleting the full text index
@@ -232,7 +244,7 @@ class DBTest {
                 arrayListOf(
                     PathAndValue("/messages/a", Message("Message A blah"))
                 ),
-                db.list<String>("/%", fullTextSearch = "blah")
+                db.list<Message>("/%", fullTextSearch = "blah")
             )
         }
     }
