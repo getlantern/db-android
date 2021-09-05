@@ -211,6 +211,7 @@ class DB private constructor(
     private val txExecutor: ExecutorService,
     private val publishExecutor: ExecutorService,
     private val derived: Boolean = false,
+    private val dropOldFullTextIndex: Boolean = true
 ) :
     Queryable(db, schema, serde), Closeable {
     private val subscribersBySync = HashMap<Boolean, RadixTree<PersistentMap<String, RawSubscriber<Any>>>>()
@@ -256,10 +257,14 @@ class DB private constructor(
             """CREATE INDEX IF NOT EXISTS ${schema}_data_value_index ON ${schema}_data(value)
                         WHERE SUBSTR(CAST(value AS TEXT), 1, 1) = 'T'"""
         )
-        // Create a table for full text search
+        if (dropOldFullTextIndex) {
+            // Drop old version of full text search table
+            db.execSQL("DROP TABLE IF EXISTS ${schema}_fts")
+        }
+        // Create a (new style) table for full text search
         db.execSQL(
-            """CREATE VIRTUAL TABLE IF NOT EXISTS ${schema}_fts
-                        USING fts5(value, content=data, tokenize='porter unicode61')"""
+            """CREATE VIRTUAL TABLE IF NOT EXISTS ${schema}_fts2
+                        USING fts5(value, tokenize='porter trigram')"""
         )
         // Create a table for managing custom counters (currently used only for full text indexing)
         db.execSQL(
@@ -328,6 +333,24 @@ class DB private constructor(
                 }
             }
             return DB(db, schema, name)
+        }
+
+        fun highlightString(
+            highlightsRegex: Regex,
+            target: String,
+            highlights: String
+        ): String {
+            val matches = highlightsRegex.findAll(highlights)
+            var result = target
+            val seenHighlights = mutableSetOf<String>()
+            matches.forEach { groups ->
+                val highlight = groups.groupValues[1]
+                if (!seenHighlights.contains(highlight)) {
+                    result = result.replace(highlight, groups.groupValues[0])
+                    seenHighlights.add(highlight)
+                }
+            }
+            return result
         }
     }
 
@@ -680,20 +703,43 @@ open class Queryable internal constructor(
      *
      * If fullTextSearch is specified, in addition to the pathQuery, rows will be filtered by
      * searching for matches to the fullTextSearch term in the full text index.
+     *
+     * @param fullTextHighlight if specified, terms matching the full text search will be
+     *                          highlighted using this function. It receives the stored entity and
+     *                          a function that can replace the supplied text with a highlighted
+     *                          version of the supplied text.
+     * @param fullTextHighlightStartDelim delimiter at start of highlighted section
+     * @param fullTextHighlightEndDelim delimiter at end of highlighted section
      */
     fun <T : Any> list(
         pathQuery: String,
         start: Int = 0,
         count: Int = Int.MAX_VALUE,
         fullTextSearch: String? = null,
-        reverseSort: Boolean = false
+        fullTextHighlightStartDelim: String = "*",
+        fullTextHighlightEndDelim: String = "*",
+        reverseSort: Boolean = false,
+        fullTextHighlight: ((T, (String) -> String) -> T)? = null,
     ): List<PathAndValue<T>> {
         val result = ArrayList<PathAndValue<T>>()
         doList(pathQuery, start, count, fullTextSearch, reverseSort) { cursor ->
+            val path = serde.deserialize<String>(cursor.getBlob(0))
+            val value = serde.deserialize<T>(cursor.getBlob(1))
+            val finalValue = fullTextHighlight?.let { highlight ->
+                val highlights = cursor.getString(2)
+                val highlightsRegex = "\\$fullTextHighlightStartDelim([^\\$fullTextHighlightStartDelim\\$fullTextHighlightEndDelim]+)\\$fullTextHighlightEndDelim".toRegex()
+                highlight(value) { target ->
+                    DB.highlightString(
+                        highlightsRegex,
+                        target,
+                        highlights,
+                    )
+                }
+            } ?: value
             result.add(
                 PathAndValue(
-                    serde.deserialize(cursor.getBlob(0)),
-                    serde.deserialize(cursor.getBlob(1))
+                    path,
+                    finalValue,
                 )
             )
         }
@@ -745,12 +791,21 @@ open class Queryable internal constructor(
         count: Int,
         fullTextSearch: String?,
         reverseSort: Boolean,
+        fullTextHighlightStartDelim: String = "*",
+        fullTextHighlightEndDelim: String = "*",
         onRow: (cursor: Cursor) -> Unit
     ) {
         val cursor = if (fullTextSearch != null) {
             db.rawQuery(
-                "SELECT d.path, d.value FROM ${schema}_fts f INNER JOIN ${schema}_data d ON f.rowid = d.rowid WHERE d.path LIKE ? AND f.value MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
-                arrayOf(serde.serialize(pathQuery), fullTextSearch, count, start)
+                "SELECT d.path, d.value, highlight(${schema}_fts2, 0, ?, ?) FROM ${schema}_fts2 f INNER JOIN ${schema}_data d ON f.rowid = d.rowid WHERE d.path LIKE ? AND f.value MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
+                arrayOf(
+                    fullTextHighlightStartDelim,
+                    fullTextHighlightEndDelim,
+                    serde.serialize(pathQuery),
+                    fullTextSearch,
+                    count,
+                    start
+                )
             )
         } else {
             val sortOrder = if (reverseSort) "DESC" else "ASC"
@@ -838,7 +893,7 @@ open class Queryable internal constructor(
     ) {
         val cursor = if (fullTextSearch != null) {
             db.rawQuery(
-                "SELECT l.path, d.path, d.value FROM ${schema}_data l INNER JOIN ${schema}_data d ON l.value = d.path INNER JOIN ${schema}_fts f ON f.rowid = d.rowid WHERE l.path LIKE ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T' AND f.value MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
+                "SELECT l.path, d.path, d.value FROM ${schema}_data l INNER JOIN ${schema}_data d ON l.value = d.path INNER JOIN ${schema}_fts2 f ON f.rowid = d.rowid WHERE l.path LIKE ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T' AND f.value MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
                 arrayOf(serde.serialize(pathQuery), fullTextSearch, count, start)
             )
         } else {
@@ -959,15 +1014,12 @@ class Transaction internal constructor(
         val onConflictClause =
             if (updateIfPresent) " ON CONFLICT(path) DO UPDATE SET value = EXCLUDED.value" else ""
         val bytes = serde.serialize(value)
-        var rowId: Long? = null
-        if (fullText != null) {
-            db.execSQL("INSERT INTO ${schema}_counters(id, value) VALUES(0, 0) ON CONFLICT(id) DO UPDATE SET value = value+1")
-            db.rawQuery("SELECT value FROM ${schema}_counters WHERE id = 0", null).use { cursor ->
-                if (cursor == null || !cursor.moveToNext()) {
-                    throw RuntimeException("Unable to read counter value for full text indexing")
-                }
-                rowId = cursor.getLong(0)
+        db.execSQL("INSERT INTO ${schema}_counters(id, value) VALUES(0, 0) ON CONFLICT(id) DO UPDATE SET value = value+1")
+        val rowId = db.rawQuery("SELECT value FROM ${schema}_counters WHERE id = 0", null).use { cursor ->
+            if (cursor == null || !cursor.moveToNext()) {
+                throw RuntimeException("Unable to read counter value for full text indexing")
             }
+            cursor.getLong(0)
         }
         db.execSQL(
             "INSERT INTO ${schema}_data(path, value, rowid) VALUES(?, ?, ?)$onConflictClause",
@@ -975,7 +1027,7 @@ class Transaction internal constructor(
         )
         if (fullText != null) {
             db.execSQL(
-                "INSERT INTO ${schema}_fts(rowid, value) VALUES(?, ?)",
+                "INSERT INTO ${schema}_fts2(rowid, value) VALUES(?, ?)",
                 arrayOf(rowId, fullText)
             )
         }
@@ -993,30 +1045,12 @@ class Transaction internal constructor(
     /**
      * Deletes the value at the given path
      */
-    fun <T : Any> delete(path: String, extractFullText: ((T) -> String)? = null) {
+    fun delete(path: String) {
         val serializedPath = serde.serialize(path)
-        extractFullText?.let {
-            db.rawQuery(
-                "SELECT rowid, value FROM ${schema}_data WHERE path = ?", arrayOf(serializedPath)
-            ).use { cursor ->
-                if (cursor != null && cursor.moveToNext()) {
-                    db.execSQL(
-                        "INSERT INTO ${schema}_fts(${schema}_fts, rowid, value) VALUES('delete', ?, ?)",
-                        arrayOf(
-                            cursor.getLong(0),
-                            extractFullText(serde.deserialize(cursor.getBlob(1)))
-                        )
-                    )
-                }
-            }
-        }
+        db.execSQL("DELETE FROM ${schema}_fts2 WHERE rowid = (SELECT rowid FROM ${schema}_data WHERE path = ?)", arrayOf(serializedPath))
         db.execSQL("DELETE FROM ${schema}_data WHERE path = ?", arrayOf(serializedPath))
         deletionsBySchema[schema]!! += path
         updatesBySchema[schema]!!.remove(path)
-    }
-
-    fun delete(path: String) {
-        delete<Any>(path, null)
     }
 
     internal fun publish(synchronous: Boolean) {
