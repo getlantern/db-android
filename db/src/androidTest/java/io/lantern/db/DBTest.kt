@@ -280,6 +280,15 @@ class DBTest {
             assertEquals("value should have been udpated by regular put", "c", db.get("path"))
 
             assertEquals(arrayListOf("a", "c"), updates)
+
+            db.mutate { tx ->
+                tx.put("ap", "a")
+                assertEquals("a", tx.get("ap"))
+                db.mutate { tx2 ->
+                    assertEquals("a", tx2.get("ap"))
+                    assertEquals("a", db.get("ap"))
+                }
+            }
         }
     }
 
