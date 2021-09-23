@@ -200,34 +200,14 @@ class DBTest {
                 db.list<Message>("/messages/%")
             )
 
-            assertEquals(
-                arrayListOf(
-                    PathAndValue("/messages/d", Message("Message D blah blah blah")),
-                    PathAndValue("/messages/c", Message("Message C blah blah")),
-                    PathAndValue("/messages/a", Message("Message A blah"))
-                ),
-                db.list<Message>("/%", fullTextSearch = "blah")
-            )
-
-            assertEquals(
-                arrayListOf(
-                    Detail("/list/4", "/messages/d", Message("Message D blah blah blah")),
-                    Detail("/list/3", "/messages/c", Message("Message C blah blah")),
-                    Detail("/list/1", "/messages/a", Message("Message A blah"))
-                ),
-                db.listDetails<Message>("/list/%", fullTextSearch = "blah")
-            )
-
             // test prefix match with highlighting
             assertEquals(
                 arrayListOf(
-                    PathAndValue("/messages/d", Message("Message D *bla*h *bla*h *bla*h")),
-                    PathAndValue("/messages/c", Message("Message C *bla*h *bla*h")),
-                    PathAndValue("/messages/a", Message("Message A *bla*h"))
+                    SearchResult("/messages/d", Raw(db.serde, Message("Message D blah blah blah")), "...*bla*h *bla*h..."),
+                    SearchResult("/messages/c", Raw(db.serde, Message("Message C blah blah")), "...*bla*h *bla*h"),
+                    SearchResult("/messages/a", Raw(db.serde, Message("Message A blah")), "...ge A *bla*h")
                 ),
-                db.list<Message>("/%", fullTextSearch = "bla*") { msg, highlight ->
-                    Message(highlight(msg.body))
-                }
+                db.search<Message>("/%", "bla*", SnippetConfig(numTokens = 7))
             )
 
             // now delete
@@ -242,9 +222,9 @@ class DBTest {
 
             assertEquals(
                 arrayListOf(
-                    PathAndValue("/messages/a", Message("Message A blah"))
+                    SearchResult("/messages/a", Raw(db.serde, Message("Message A blah")), "...*bla*...")
                 ),
-                db.list<Message>("/%", fullTextSearch = "blah")
+                db.search<Message>("/%", "blah", SnippetConfig(numTokens = 1))
             )
         }
     }
