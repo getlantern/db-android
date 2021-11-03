@@ -246,6 +246,23 @@ class DBTest {
                 ),
                 db.list<Message>("/%", fullTextSearch = "blah")
             )
+
+            // now update
+            db.mutatePublishBlocking { tx ->
+                tx.put(
+                    "/messages/a",
+                    Message("Message A is different now"),
+                    fullText = "Message A is different now"
+                )
+            }
+
+            assertEquals(0, db.list<Message>("/%", fullTextSearch = "blah").size)
+            assertEquals(
+                arrayListOf(
+                    PathAndValue("/messages/a", Message("Message A is different now"))
+                ),
+                db.list<Message>("/%", fullTextSearch = "diff")
+            )
         }
     }
 
