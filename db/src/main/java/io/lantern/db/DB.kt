@@ -20,12 +20,32 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.collections.ArrayList
+import kotlin.collections.HashMap
+import kotlin.collections.List
+import kotlin.collections.Map
+import kotlin.collections.MutableMap
+import kotlin.collections.MutableSet
+import kotlin.collections.Set
+import kotlin.collections.component1
+import kotlin.collections.component2
+import kotlin.collections.emptyMap
+import kotlin.collections.emptySet
+import kotlin.collections.forEach
+import kotlin.collections.map
+import kotlin.collections.mapOf
+import kotlin.collections.minusAssign
+import kotlin.collections.plusAssign
+import kotlin.collections.set
+import kotlin.collections.toMap
 
 private val trueAndFalse = arrayOf(false, true)
 
 data class PathAndValue<T>(val path: String, val value: T)
 
 data class Detail<T>(val path: String, val detailPath: String, val value: T)
+
+data class SearchResult<T : Any>(val path: String, val value: Raw<T>, val snippet: String)
 
 data class ChangeSet<T : Any>(
     val updates: Map<String, T> = emptyMap(),
@@ -47,6 +67,21 @@ data class DetailsChangeSet<T : Any>(
      * Any deleted paths.
      */
     val deletions: Set<String> = emptySet(),
+)
+
+/**
+ * Configuration for highlighting snippets
+ *
+ * @param higlhightStart delimiter at start of highlighted section
+ * @param highlightEnd delimiter at end of highlighted section
+ * @param ellipses what to use as a prefix/suffix for elided text
+ * @param numTokens the maximum number of tokens to include in snippet (0 to 64)
+ */
+data class SnippetConfig(
+    val highlightStart: String = "*",
+    val highlightEnd: String = "*",
+    val ellipses: String = "...",
+    val numTokens: Int = 64
 )
 
 /**
@@ -214,8 +249,10 @@ class DB private constructor(
     private val dropOldFullTextIndex: Boolean = true
 ) :
     Queryable(db, schema, serde), Closeable {
-    private val subscribersBySync = HashMap<Boolean, RadixTree<PersistentMap<String, RawSubscriber<Any>>>>()
-    private val subscribersBySyncAndId = HashMap<Boolean, ConcurrentHashMap<String, RawSubscriber<Any>>>()
+    private val subscribersBySync =
+        HashMap<Boolean, RadixTree<PersistentMap<String, RawSubscriber<Any>>>>()
+    private val subscribersBySyncAndId =
+        HashMap<Boolean, ConcurrentHashMap<String, RawSubscriber<Any>>>()
     private val serdesBySchema: ConcurrentHashMap<String, Serde> = ConcurrentHashMap()
 
     private constructor(db: SQLiteDatabase, schema: String, name: String) : this(
@@ -333,24 +370,6 @@ class DB private constructor(
                 }
             }
             return DB(db, schema, name)
-        }
-
-        fun highlightString(
-            highlightsRegex: Regex,
-            target: String,
-            highlights: String
-        ): String {
-            val matches = highlightsRegex.findAll(highlights)
-            var result = target
-            val seenHighlights = mutableSetOf<String>()
-            matches.forEach { groups ->
-                val highlight = groups.groupValues[1]
-                if (!seenHighlights.contains(highlight)) {
-                    result = result.replace(highlight, groups.groupValues[0])
-                    seenHighlights.add(highlight)
-                }
-            }
-            return result
         }
     }
 
@@ -598,7 +617,7 @@ open class Queryable internal constructor(
      */
     fun <T : Any> get(path: String): T? {
         selectSingle(path).use { cursor ->
-            if (cursor == null || !cursor.moveToNext()) {
+            if (!cursor.moveToNext()) {
                 return null
             }
             return serde.deserialize(cursor.getBlob(0))
@@ -610,7 +629,7 @@ open class Queryable internal constructor(
      */
     fun <T : Any> getRaw(path: String): Raw<T>? {
         selectSingle(path).use { cursor ->
-            if (cursor == null || !cursor.moveToNext()) {
+            if (!cursor.moveToNext()) {
                 return null
             }
             return Raw(serde, cursor.getBlob(0))
@@ -700,46 +719,19 @@ open class Queryable internal constructor(
      *
      * By default results are sorted lexicographically by path. If reverseSort is specified, that is
      * reversed.
-     *
-     * If fullTextSearch is specified, in addition to the pathQuery, rows will be filtered by
-     * searching for matches to the fullTextSearch term in the full text index.
-     *
-     * @param fullTextHighlight if specified, terms matching the full text search will be
-     *                          highlighted using this function. It receives the stored entity and
-     *                          a function that can replace the supplied text with a highlighted
-     *                          version of the supplied text.
-     * @param fullTextHighlightStartDelim delimiter at start of highlighted section
-     * @param fullTextHighlightEndDelim delimiter at end of highlighted section
      */
     fun <T : Any> list(
         pathQuery: String,
         start: Int = 0,
         count: Int = Int.MAX_VALUE,
-        fullTextSearch: String? = null,
-        fullTextHighlightStartDelim: String = "*",
-        fullTextHighlightEndDelim: String = "*",
         reverseSort: Boolean = false,
-        fullTextHighlight: ((T, (String) -> String) -> T)? = null,
     ): List<PathAndValue<T>> {
         val result = ArrayList<PathAndValue<T>>()
-        doList(pathQuery, start, count, fullTextSearch, reverseSort) { cursor ->
-            val path = serde.deserialize<String>(cursor.getBlob(0))
-            val value = serde.deserialize<T>(cursor.getBlob(1))
-            val finalValue = fullTextHighlight?.let { highlight ->
-                val highlights = cursor.getString(2)
-                val highlightsRegex = "\\$fullTextHighlightStartDelim([^\\$fullTextHighlightStartDelim\\$fullTextHighlightEndDelim]+)\\$fullTextHighlightEndDelim".toRegex()
-                highlight(value) { target ->
-                    DB.highlightString(
-                        highlightsRegex,
-                        target,
-                        highlights,
-                    )
-                }
-            } ?: value
+        doList(pathQuery, start, count, reverseSort) { cursor ->
             result.add(
                 PathAndValue(
-                    path,
-                    finalValue,
+                    serde.deserialize<String>(cursor.getBlob(0)),
+                    serde.deserialize<T>(cursor.getBlob(1)),
                 )
             )
         }
@@ -753,15 +745,46 @@ open class Queryable internal constructor(
         pathQuery: String,
         start: Int = 0,
         count: Int = Int.MAX_VALUE,
-        fullTextSearch: String? = null,
         reverseSort: Boolean = false
     ): List<PathAndValue<Raw<T>>> {
         val result = ArrayList<PathAndValue<Raw<T>>>()
-        doList(pathQuery, start, count, fullTextSearch, reverseSort) { cursor ->
+        doList(pathQuery, start, count, reverseSort) { cursor ->
             result.add(
                 PathAndValue(
                     serde.deserialize(cursor.getBlob(0)),
                     Raw(serde, cursor.getBlob(1))
+                )
+            )
+        }
+        return result
+    }
+
+    /**
+     * Like list, but performing a full-text search. In addition to the path and value, this returns
+     * a highlighted snippet from the full text index.
+     */
+    fun <T : Any> search(
+        pathQuery: String,
+        search: String,
+        snippetConfig: SnippetConfig = SnippetConfig(),
+        start: Int = 0,
+        count: Int = Int.MAX_VALUE,
+        reverseSort: Boolean = false,
+    ): List<SearchResult<T>> {
+        val result = ArrayList<SearchResult<T>>()
+        doList(
+            pathQuery,
+            start,
+            count,
+            reverseSort,
+            search,
+            snippetConfig
+        ) { cursor ->
+            result.add(
+                SearchResult(
+                    serde.deserialize<String>(cursor.getBlob(0)),
+                    Raw(serde, cursor.getBlob(1)),
+                    cursor.getString(2),
                 )
             )
         }
@@ -775,11 +798,10 @@ open class Queryable internal constructor(
         pathQuery: String,
         start: Int = 0,
         count: Int = Int.MAX_VALUE,
-        fullTextSearch: String? = null,
         reverseSort: Boolean = false
     ): List<String> {
         val result = ArrayList<String>()
-        doList(pathQuery, start, count, fullTextSearch, reverseSort) { cursor ->
+        doList(pathQuery, start, count, reverseSort) { cursor ->
             result.add(serde.deserialize(cursor.getBlob(0)))
         }
         return result
@@ -789,18 +811,19 @@ open class Queryable internal constructor(
         pathQuery: String,
         start: Int,
         count: Int,
-        fullTextSearch: String?,
         reverseSort: Boolean,
-        fullTextHighlightStartDelim: String = "*",
-        fullTextHighlightEndDelim: String = "*",
+        fullTextSearch: String? = null,
+        snippetConfig: SnippetConfig = SnippetConfig(),
         onRow: (cursor: Cursor) -> Unit
     ) {
         val cursor = if (fullTextSearch != null) {
             db.rawQuery(
-                "SELECT d.path, d.value, highlight(${schema}_fts2, 0, ?, ?) FROM ${schema}_fts2 f INNER JOIN ${schema}_data d ON f.rowid = d.rowid WHERE d.path LIKE ? AND f.value MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
+                "SELECT d.path, d.value, snippet(${schema}_fts2, 0, ?, ?, ?, ?) FROM ${schema}_fts2 f INNER JOIN ${schema}_data d ON f.rowid = d.rowid WHERE d.path LIKE ? AND f.value MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
                 arrayOf(
-                    fullTextHighlightStartDelim,
-                    fullTextHighlightEndDelim,
+                    snippetConfig.highlightStart,
+                    snippetConfig.highlightEnd,
+                    snippetConfig.ellipses,
+                    snippetConfig.numTokens,
                     serde.serialize(pathQuery),
                     fullTextSearch,
                     count,
@@ -835,16 +858,11 @@ open class Queryable internal constructor(
      *  "/list/2": "/detail/1"}
      *
      * The pathQuery "/list/%" would return ["two", "one"]
-     *
-     * If fullTextSearch is specified, in addition to the pathQuery, detail rows will be filtered by
-     * searching for matches to the fullTextSearch term in the full text index corresponding to the
-     * detail rows (not the top level list).
      */
     fun <T : Any> listDetails(
         pathQuery: String,
         start: Int = 0,
         count: Int = Int.MAX_VALUE,
-        fullTextSearch: String? = null,
         reverseSort: Boolean = false
     ): List<Detail<T>> {
         val result = ArrayList<Detail<T>>()
@@ -852,7 +870,6 @@ open class Queryable internal constructor(
             pathQuery,
             start,
             count,
-            fullTextSearch,
             reverseSort
         ) { listPath, detailPath, value ->
             result.add(Detail(listPath, detailPath, serde.deserialize(value)))
@@ -867,7 +884,6 @@ open class Queryable internal constructor(
         pathQuery: String,
         start: Int = 0,
         count: Int = Int.MAX_VALUE,
-        fullTextSearch: String? = null,
         reverseSort: Boolean = false
     ): List<Detail<Raw<T>>> {
         val result = ArrayList<Detail<Raw<T>>>()
@@ -875,7 +891,6 @@ open class Queryable internal constructor(
             pathQuery,
             start,
             count,
-            fullTextSearch,
             reverseSort
         ) { listPath, detailPath, value ->
             result.add(Detail(listPath, detailPath, Raw(serde, value)))
@@ -887,22 +902,14 @@ open class Queryable internal constructor(
         pathQuery: String,
         start: Int,
         count: Int,
-        fullTextSearch: String?,
         reverseSort: Boolean,
         onResult: (listPath: String, detailPath: String, value: ByteArray) -> Unit
     ) {
-        val cursor = if (fullTextSearch != null) {
-            db.rawQuery(
-                "SELECT l.path, d.path, d.value FROM ${schema}_data l INNER JOIN ${schema}_data d ON l.value = d.path INNER JOIN ${schema}_fts2 f ON f.rowid = d.rowid WHERE l.path LIKE ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T' AND f.value MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
-                arrayOf(serde.serialize(pathQuery), fullTextSearch, count, start)
-            )
-        } else {
-            val sortOrder = if (reverseSort) "DESC" else "ASC"
-            db.rawQuery(
-                "SELECT l.path, d.path, d.value FROM ${schema}_data l INNER JOIN ${schema}_data d ON l.value = d.path WHERE l.path LIKE ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T' ORDER BY l.path $sortOrder LIMIT ? OFFSET ?",
-                arrayOf(serde.serialize(pathQuery), count, start)
-            )
-        }
+        val sortOrder = if (reverseSort) "DESC" else "ASC"
+        val cursor = db.rawQuery(
+            "SELECT l.path, d.path, d.value FROM ${schema}_data l INNER JOIN ${schema}_data d ON l.value = d.path WHERE l.path LIKE ? AND SUBSTR(CAST(l.value AS TEXT), 1, 1) = 'T' ORDER BY l.path $sortOrder LIMIT ? OFFSET ?",
+            arrayOf(serde.serialize(pathQuery), count, start)
+        )
         cursor.use {
             if (cursor != null) {
                 while (cursor.moveToNext()) {
@@ -1015,12 +1022,13 @@ class Transaction internal constructor(
             if (updateIfPresent) " ON CONFLICT(path) DO UPDATE SET value = EXCLUDED.value" else ""
         val bytes = serde.serialize(value)
         db.execSQL("INSERT INTO ${schema}_counters(id, value) VALUES(0, 0) ON CONFLICT(id) DO UPDATE SET value = value+1")
-        val nextRowId = db.rawQuery("SELECT value FROM ${schema}_counters WHERE id = 0", null).use { cursor ->
-            if (cursor == null || !cursor.moveToNext()) {
-                throw RuntimeException("Unable to read counter value for full text indexing")
+        val nextRowId =
+            db.rawQuery("SELECT value FROM ${schema}_counters WHERE id = 0", null).use { cursor ->
+                if (cursor == null || !cursor.moveToNext()) {
+                    throw RuntimeException("Unable to read counter value for full text indexing")
+                }
+                cursor.getLong(0)
             }
-            cursor.getLong(0)
-        }
         db.execSQL(
             "INSERT INTO ${schema}_data(path, value, rowid) VALUES(?, ?, ?)$onConflictClause",
             arrayOf(serializedPath, bytes, nextRowId)
@@ -1063,7 +1071,10 @@ class Transaction internal constructor(
      */
     fun delete(path: String) {
         val serializedPath = serde.serialize(path)
-        db.execSQL("DELETE FROM ${schema}_fts2 WHERE rowid = (SELECT rowid FROM ${schema}_data WHERE path = ?)", arrayOf(serializedPath))
+        db.execSQL(
+            "DELETE FROM ${schema}_fts2 WHERE rowid = (SELECT rowid FROM ${schema}_data WHERE path = ?)",
+            arrayOf(serializedPath)
+        )
         db.execSQL("DELETE FROM ${schema}_data WHERE path = ?", arrayOf(serializedPath))
         deletionsBySchema[schema]!! += path
         updatesBySchema[schema]!!.remove(path)
