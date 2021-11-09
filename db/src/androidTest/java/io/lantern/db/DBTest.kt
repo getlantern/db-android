@@ -853,7 +853,7 @@ class DBTest {
         val db = DB.createOrOpen(
             InstrumentationRegistry.getInstrumentation().targetContext,
             filePath = File(tempDir, "testdb").toString(),
-            password = "testpassword",
+            password = arrayOf(1.toByte(), 2.toByte(), 3.toByte()).toByteArray(),
         )
         db.registerType(20, Message::class.java)
         return db

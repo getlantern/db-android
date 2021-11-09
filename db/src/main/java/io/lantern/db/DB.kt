@@ -342,12 +342,17 @@ class DB private constructor(
          * Builds a DB backed by an encrypted SQLite database at the given filePath
          *
          * collectionName - the name of the map as stored in the database
-         * password - the password used to encrypted the data (the longer the better)
+         * password - the password used to encrypted the data (the longer the better).
+         *
+         * Note about passwords. Old versions of this library used to use string passwords. Old
+         * string passwords can still be used in their UTF-8 encoded form, like this:
+         *
+         * stringPassword.toByteArray(Charsets.UTF_8)
          */
         fun createOrOpen(
             ctx: Context,
             filePath: String,
-            password: String,
+            password: ByteArray,
             secureDelete: Boolean = true,
             schema: String = "default",
             name: String = File(filePath).name
