@@ -226,6 +226,23 @@ class DBTest {
                 ),
                 db.search<Message>("/%", "blah", SnippetConfig(numTokens = 1))
             )
+
+            // now update
+            db.mutatePublishBlocking { tx ->
+                tx.put(
+                    "/messages/a",
+                    Message("Message A is different now"),
+                    fullText = "Message A is different now"
+                )
+            }
+
+            assertEquals(0, db.search<Message>("/%", "blah").size)
+            assertEquals(
+                arrayListOf(
+                    SearchResult("/messages/a", Raw(db.serde, Message("Message A is different now")), "Message A is *diff*erent now"),
+                ),
+                db.search<Message>("/%", "diff")
+            )
         }
     }
 

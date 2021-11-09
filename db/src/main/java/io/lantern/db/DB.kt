@@ -1022,7 +1022,7 @@ class Transaction internal constructor(
             if (updateIfPresent) " ON CONFLICT(path) DO UPDATE SET value = EXCLUDED.value" else ""
         val bytes = serde.serialize(value)
         db.execSQL("INSERT INTO ${schema}_counters(id, value) VALUES(0, 0) ON CONFLICT(id) DO UPDATE SET value = value+1")
-        val rowId =
+        val nextRowId =
             db.rawQuery("SELECT value FROM ${schema}_counters WHERE id = 0", null).use { cursor ->
                 if (cursor == null || !cursor.moveToNext()) {
                     throw RuntimeException("Unable to read counter value for full text indexing")
@@ -1031,13 +1031,29 @@ class Transaction internal constructor(
             }
         db.execSQL(
             "INSERT INTO ${schema}_data(path, value, rowid) VALUES(?, ?, ?)$onConflictClause",
-            arrayOf(serializedPath, bytes, rowId)
+            arrayOf(serializedPath, bytes, nextRowId)
         )
         if (fullText != null) {
-            db.execSQL(
-                "INSERT INTO ${schema}_fts2(rowid, value) VALUES(?, ?)",
-                arrayOf(rowId, fullText)
-            )
+            val rowId = db.rawQuery(
+                "SELECT rowid FROM ${schema}_data WHERE path = ?",
+                arrayOf(serializedPath)
+            ).use { cursor ->
+                if (cursor == null || !cursor.moveToNext()) {
+                    throw RuntimeException("Unable to read rowid of data row")
+                }
+                cursor.getLong(0)
+            }
+            if (rowId == nextRowId) {
+                db.execSQL(
+                    "INSERT INTO ${schema}_fts2(rowid, value) VALUES(?, ?)",
+                    arrayOf(rowId, fullText)
+                )
+            } else {
+                db.execSQL(
+                    "UPDATE ${schema}_fts2 SET value = ? where rowid = ?",
+                    arrayOf(fullText, rowId)
+                )
+            }
         }
         updatesBySchema[schema]!![path] = Raw(serde, bytes, value)
         deletionsBySchema[schema]!! -= path
