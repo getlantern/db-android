@@ -670,6 +670,37 @@ class DBTest {
     }
 
     @Test
+    fun testClear() {
+        buildDB().use { db ->
+            db.mutate { tx -> tx.put("path", "a") }
+
+            db.withSchema("theschema").use { schema ->
+                val received = mutableListOf<String?>()
+
+                schema.subscribe(object : Subscriber<String>("100", "otherpath") {
+                    override fun onChanges(changes: ChangeSet<String>) {
+                        changes.updates.forEach { it ->
+                            received.add(it.value)
+                        }
+                        changes.deletions.forEach {
+                            received.add(null)
+                        }
+                    }
+                })
+                schema.mutate { tx -> tx.put("otherpath", "b") }
+                assertEquals("b", schema.get<String>("otherpath"))
+                schema.clear()
+                assertNull(schema.get<String>("otherpath"))
+                schema.mutate { tx -> tx.put("otherpath", "c") }
+                assertEquals("c", schema.get<String>("otherpath"))
+                assertEquals(listOf("b", null, "c"), received)
+            }
+
+            assertEquals("a", db.get<String>("path"))
+        }
+    }
+
+    @Test
     fun testDurability() {
         buildDB().use { db ->
             db.mutatePublishBlocking { tx ->

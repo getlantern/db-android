@@ -279,6 +279,10 @@ class DB private constructor(
         subscribersBySyncAndId[false] = ConcurrentHashMap<String, RawSubscriber<Any>>()
         subscribersBySyncAndId[true] = ConcurrentHashMap<String, RawSubscriber<Any>>()
 
+        initTables()
+    }
+
+    private fun initTables() {
         // All data is stored in a single table that has a TEXT path, a BLOB value. The table is
         // stored as an index organized table (WITHOUT ROWID option) as a performance
         // optimization for range scans on the path. To support full text indexing with an
@@ -308,6 +312,15 @@ class DB private constructor(
             """CREATE TABLE IF NOT EXISTS ${schema}_counters
                    (id INTEGER PRIMARY KEY, value INTEGER)""".trimMargin()
         )
+    }
+
+    /**
+     * Clears all data in the current database schema
+     */
+    fun clear() {
+        mutate { tx ->
+            listPaths("%").forEach { tx.delete(it) }
+        }
     }
 
     /**
