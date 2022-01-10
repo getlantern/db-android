@@ -24,8 +24,8 @@ class SerdeTest {
     @Test
     fun testKryoWithAndWithoutRegistration() {
         val serde = Serde()
-        val obj = KryoMessage("name", 100)
-        val bytesUnregistered = serde.serialize(obj)
+        val obj = Message("name", 100)
+        val bytesUnregistered = serde.serializeLegacyMode(obj)
         assertEquals(
             "unregistered object type should be serialized with kryo",
             'K',
@@ -38,13 +38,13 @@ class SerdeTest {
         )
 
         try {
-            serde.register(19, KryoMessage::class.java)
+            serde.register(19, Message::class.java)
             fail("registering an ID below 20 should have failed")
         } catch (e: IllegalArgumentException) {
             // expected
         }
-        serde.register(20, KryoMessage::class.java)
-        val bytesRegistered = serde.serialize(obj)
+        serde.register(20, Message::class.java)
+        val bytesRegistered = serde.serializeLegacyMode(obj)
         assertEquals(
             "registered object type should be serialized with kryo",
             'K',
@@ -69,10 +69,41 @@ class SerdeTest {
     @Test
     fun testProtocolBufferObjectWithAndWithoutRegistration() {
         val serde = Serde()
-        val obj = TestMessage.newBuilder().setName("name").setNumber(100).build()
+        val obj = Message("name", 100)
         try {
             serde.serialize(obj)
             fail("attempt to serialize unregistered protocol buffer object should fail")
+        } catch (e: AssertionError) {
+            // expected
+        }
+
+        try {
+            serde.register(19, Message::class.java)
+            fail("registering an ID below 20 should have failed")
+        } catch (e: IllegalArgumentException) {
+            // expected
+        }
+        serde.register(20, Message::class.java)
+        val bytesRegistered = serde.serialize(obj)
+        assertEquals(
+            "registered object type should be serialized with JSON",
+            'J',
+            bytesRegistered[0].toChar()
+        )
+        assertEquals(
+            "round-tripped registered JSON object should match original",
+            obj,
+            serde.deserialize(bytesRegistered)
+        )
+    }
+
+    @Test
+    fun testJsonObjectWithAndWithoutRegistration() {
+        val serde = Serde()
+        val obj = TestMessage.newBuilder().setName("name").setNumber(100).build()
+        try {
+            serde.serialize(obj)
+            fail("attempt to serialize unregistered object should fail")
         } catch (e: AssertionError) {
             // expected
         }
@@ -96,6 +127,35 @@ class SerdeTest {
             serde.deserialize(bytesRegistered)
         )
     }
+
+    @Test
+    fun testMigration() {
+        val serde = Serde()
+
+        val legacyBytes = serde.serializeLegacyMode(5)
+        assertEquals(
+            "legacy serialization should have used Kryo",
+            'K',
+            legacyBytes[0].toChar()
+        )
+        assertEquals(
+            "round-tripped legacy value should match original",
+            5,
+            serde.deserialize<Int>(legacyBytes)
+        )
+
+        val newBytes = serde.serialize(5)
+        assertEquals(
+            "new style serialization should have serialized integer",
+            'I',
+            newBytes[0].toChar()
+        )
+        assertEquals(
+            "round-tripped new style value should match original",
+            5,
+            serde.deserialize<Int>(newBytes)
+        )
+    }
 }
 
-private data class KryoMessage(val name: String = "", val number: Int = 0)
+internal data class Message(val name: String = "", val number: Int = 0)

@@ -5,7 +5,6 @@ package io.lantern.db
 
 import android.content.Context
 import android.content.SharedPreferences
-import androidx.core.content.edit
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
@@ -170,10 +169,10 @@ class DBTest {
     @Test
     fun testFullTextQuery() {
         val values = mapOf(
-            "/messages/c" to Message("Message C blah blah"),
-            "/messages/d" to Message("Message D blah blah blah"),
-            "/messages/a" to Message("Message A blah"),
-            "/messages/b" to Message("Message B"),
+            "/messages/c" to Value("Message C blah blah"),
+            "/messages/d" to Value("Message D blah blah blah"),
+            "/messages/a" to Value("Message A blah"),
+            "/messages/b" to Value("Message B"),
         )
         buildDB().use { db ->
             db.mutatePublishBlocking { tx ->
@@ -192,22 +191,22 @@ class DBTest {
 
             assertEquals(
                 arrayListOf(
-                    PathAndValue("/messages/a", Message("Message A blah")),
-                    PathAndValue("/messages/b", Message("Message B")),
-                    PathAndValue("/messages/c", Message("Message C blah blah")),
-                    PathAndValue("/messages/d", Message("Message D blah blah blah"))
+                    PathAndValue("/messages/a", Value("Message A blah")),
+                    PathAndValue("/messages/b", Value("Message B")),
+                    PathAndValue("/messages/c", Value("Message C blah blah")),
+                    PathAndValue("/messages/d", Value("Message D blah blah blah"))
                 ),
-                db.list<Message>("/messages/%")
+                db.list<Value>("/messages/%")
             )
 
             // test prefix match with highlighting
             assertEquals(
                 arrayListOf(
-                    SearchResult("/messages/d", Raw(db.serde, Message("Message D blah blah blah")), "...*bla*h *bla*h..."),
-                    SearchResult("/messages/c", Raw(db.serde, Message("Message C blah blah")), "...*bla*h *bla*h"),
-                    SearchResult("/messages/a", Raw(db.serde, Message("Message A blah")), "...ge A *bla*h")
+                    SearchResult("/messages/d", Raw(db.serde, Value("Message D blah blah blah")), "...*bla*h *bla*h..."),
+                    SearchResult("/messages/c", Raw(db.serde, Value("Message C blah blah")), "...*bla*h *bla*h"),
+                    SearchResult("/messages/a", Raw(db.serde, Value("Message A blah")), "...ge A *bla*h")
                 ),
-                db.search<Message>("/%", "bla*", SnippetConfig(numTokens = 7))
+                db.search<Value>("/%", "bla*", SnippetConfig(numTokens = 7))
             )
 
             // now delete
@@ -215,33 +214,33 @@ class DBTest {
                 // delete an entry including the full text index
                 tx.delete("/messages/d")
                 // add the entry back without full-text indexing to make sure it doesn't show up in results
-                tx.put("/messages/d", Message("Message D blah blah blah"))
+                tx.put("/messages/d", Value("Message D blah blah blah"))
                 // delete another entry without deleting the full text index
                 tx.delete("/messages/c")
             }
 
             assertEquals(
                 arrayListOf(
-                    SearchResult("/messages/a", Raw(db.serde, Message("Message A blah")), "...*bla*...")
+                    SearchResult("/messages/a", Raw(db.serde, Value("Message A blah")), "...*bla*...")
                 ),
-                db.search<Message>("/%", "blah", SnippetConfig(numTokens = 1))
+                db.search<Value>("/%", "blah", SnippetConfig(numTokens = 1))
             )
 
             // now update
             db.mutatePublishBlocking { tx ->
                 tx.put(
                     "/messages/a",
-                    Message("Message A is different now"),
+                    Value("Message A is different now"),
                     fullText = "Message A is different now"
                 )
             }
 
-            assertEquals(0, db.search<Message>("/%", "blah").size)
+            assertEquals(0, db.search<Value>("/%", "blah").size)
             assertEquals(
                 arrayListOf(
-                    SearchResult("/messages/a", Raw(db.serde, Message("Message A is different now")), "Message A is *diff*erent now"),
+                    SearchResult("/messages/a", Raw(db.serde, Value("Message A is different now")), "Message A is *diff*erent now"),
                 ),
-                db.search<Message>("/%", "diff")
+                db.search<Value>("/%", "diff")
             )
         }
     }
@@ -886,7 +885,7 @@ class DBTest {
             filePath = File(tempDir, "testdb").toString(),
             password = arrayOf(1.toByte(), 2.toByte(), 3.toByte()).toByteArray(),
         )
-        db.registerType(20, Message::class.java)
+        db.registerType(20, Value::class.java)
         return db
     }
 
@@ -905,4 +904,4 @@ class DBTest {
     }
 }
 
-internal data class Message(val body: String = "")
+internal data class Value(val body: String = "")

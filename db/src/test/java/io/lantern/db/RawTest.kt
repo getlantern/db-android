@@ -8,14 +8,17 @@ class RawTest {
     @Test
     fun testRaw() {
         val testString = "text"
-        val testMessage =
+        val pbufMessage =
             io.lantern.db.Test.TestMessage.newBuilder().setName("name").setNumber(5).build()
+        val jsonMessage = Message(name = "hi", number = 1)
 
         val serde = Serde()
-        serde.register(20, testMessage.javaClass)
+        serde.register(20, pbufMessage.javaClass)
+        serde.register(21, Message::class.java)
 
         val stringRaw = Raw(serde, testString)
-        val pbufRaw = Raw(serde, testMessage)
+        val pbufRaw = Raw(serde, pbufMessage)
+        val jsonRaw = Raw(serde, jsonMessage)
         val kryoRaw = Raw(serde, 10)
 
         Assert.assertEquals(testString, stringRaw.value)
@@ -25,18 +28,27 @@ class RawTest {
             stringRaw.bytes.toString(Charset.defaultCharset())
         )
 
-        Assert.assertEquals(testMessage, pbufRaw.value)
-        val serialized = serde.serialize(testMessage)
+        Assert.assertEquals(pbufMessage, pbufRaw.value)
+        val pbufSerialized = serde.serialize(pbufMessage)
         Assert.assertTrue(
-            serialized.copyOfRange(3, serialized.size)
+            pbufSerialized.copyOfRange(3, pbufSerialized.size)
                 .contentEquals(pbufRaw.valueOrProtoBytes as ByteArray)
         )
         Assert.assertTrue(
-            serialized.copyOfRange(3, serialized.size).contentEquals(pbufRaw.bytes)
+            pbufSerialized.copyOfRange(3, pbufSerialized.size).contentEquals(pbufRaw.bytes)
+        )
+
+        Assert.assertEquals(jsonMessage, jsonRaw.value)
+        val jsonSerialized = serde.serialize(pbufMessage)
+        Assert.assertTrue(
+            jsonSerialized.copyOfRange(3, jsonSerialized.size)
+                .contentEquals(pbufRaw.valueOrProtoBytes as ByteArray)
+        )
+        Assert.assertTrue(
+            jsonSerialized.copyOfRange(3, jsonSerialized.size).contentEquals(pbufRaw.bytes)
         )
 
         Assert.assertEquals(10, kryoRaw.value)
-        Assert.assertEquals(10, kryoRaw.valueOrProtoBytes)
         try {
             kryoRaw.bytes
             Assert.fail("attempting to get bytes from Kryo raw should have thrown exception")
