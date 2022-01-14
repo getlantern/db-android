@@ -678,11 +678,11 @@ class DBTest {
 
                 schema.subscribe(object : Subscriber<String>("100", "otherpath") {
                     override fun onChanges(changes: ChangeSet<String>) {
-                        changes.updates.forEach { it ->
+                        changes.updates.forEach {
                             received.add(it.value)
                         }
                         changes.deletions.forEach {
-                            received.add(null)
+                            received.add(it)
                         }
                     }
                 })
@@ -692,7 +692,7 @@ class DBTest {
                 assertNull(schema.get<String>("otherpath"))
                 schema.mutate { tx -> tx.put("otherpath", "c") }
                 assertEquals("c", schema.get<String>("otherpath"))
-                assertEquals(listOf("b", null, "c"), received)
+                assertEquals(listOf("b", "otherpath", "c"), received)
             }
 
             assertEquals("a", db.get<String>("path"))

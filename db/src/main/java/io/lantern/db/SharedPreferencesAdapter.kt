@@ -58,8 +58,7 @@ class SharedPreferencesAdapter(
     }
 
     override fun getInt(key: String, defValue: Int): Int {
-        var value = cache[key!!] ?: defValue
-        return when (value) {
+        return when (val value = cache[key] ?: defValue) {
             is Number -> value.toInt()
             is String -> value.toInt()
             else -> throw ClassCastException("$value cannot be cast to Int")
@@ -67,8 +66,7 @@ class SharedPreferencesAdapter(
     }
 
     override fun getLong(key: String, defValue: Long): Long {
-        var value = cache[key!!] ?: defValue
-        return when (value) {
+        return when (val value = cache[key] ?: defValue) {
             is Number -> value.toLong()
             is String -> value.toLong()
             else -> throw ClassCastException("$value cannot be cast to Long")
@@ -80,8 +78,7 @@ class SharedPreferencesAdapter(
     }
 
     override fun getBoolean(key: String, defValue: Boolean): Boolean {
-        var value = cache[key!!] ?: defValue
-        return when (value) {
+        return when (val value = cache[key] ?: defValue) {
             is Boolean -> value
             is Number -> value.toInt() == 1
             is String -> value.toBoolean()

@@ -29,7 +29,7 @@ class SerdeTest {
         assertEquals(
             "unregistered object type should be serialized with kryo",
             'K',
-            bytesUnregistered[0].toChar()
+            bytesUnregistered[0].toInt().toChar()
         )
         assertEquals(
             "round-tripped unregistered kryo object should match original",
@@ -48,7 +48,7 @@ class SerdeTest {
         assertEquals(
             "registered object type should be serialized with kryo",
             'K',
-            bytesRegistered[0].toChar()
+            bytesRegistered[0].toInt().toChar()
         )
         assertEquals(
             "round-tripped registered kryo object should match original",
@@ -88,7 +88,7 @@ class SerdeTest {
         assertEquals(
             "registered object type should be serialized with JSON",
             'J',
-            bytesRegistered[0].toChar()
+            bytesRegistered[0].toInt().toChar()
         )
         assertEquals(
             "round-tripped registered JSON object should match original",
@@ -119,7 +119,7 @@ class SerdeTest {
         assertEquals(
             "registered object type should be serialized with protocol buffers",
             'P',
-            bytesRegistered[0].toChar()
+            bytesRegistered[0].toInt().toChar()
         )
         assertEquals(
             "round-tripped registered protocol buffer object should match original",
@@ -136,7 +136,7 @@ class SerdeTest {
         assertEquals(
             "legacy serialization should have used Kryo",
             'K',
-            legacyBytes[0].toChar()
+            legacyBytes[0].toInt().toChar()
         )
         assertEquals(
             "round-tripped legacy value should match original",
@@ -148,7 +148,7 @@ class SerdeTest {
         assertEquals(
             "new style serialization should have serialized integer",
             'I',
-            newBytes[0].toChar()
+            newBytes[0].toInt().toChar()
         )
         assertEquals(
             "round-tripped new style value should match original",

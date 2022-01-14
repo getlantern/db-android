@@ -72,7 +72,7 @@ data class DetailsChangeSet<T : Any>(
 /**
  * Configuration for highlighting snippets
  *
- * @param higlhightStart delimiter at start of highlighted section
+ * @param highlightStart delimiter at start of highlighted section
  * @param highlightEnd delimiter at end of highlighted section
  * @param ellipses what to use as a prefix/suffix for elided text
  * @param numTokens the maximum number of tokens to include in snippet (0 to 64)
@@ -98,7 +98,7 @@ abstract class RawSubscriber<T : Any>(
     internal val cleanedPathPrefixes = pathPrefixes.map { it.trimEnd('%') }
 
     internal open fun onInitial(values: List<PathAndValue<Raw<T>>>) {
-        onChanges(RawChangeSet(updates = values.map { it.path to it.value }.toMap()))
+        onChanges(RawChangeSet(updates = values.associate { it.path to it.value }))
     }
 
     /**
@@ -486,7 +486,7 @@ class DB private constructor(
      */
     fun unsubscribe(subscriberId: String) {
         txExecutor.submit(
-            Callable<Unit> {
+            Callable {
                 trueAndFalse.forEach { synchronous ->
                     val subscribers = subscribersBySync[synchronous]!!
                     val subscribersById = subscribersBySyncAndId[synchronous]!!
@@ -748,8 +748,8 @@ open class Queryable internal constructor(
         doList(pathQuery, start, count, reverseSort) { cursor ->
             result.add(
                 PathAndValue(
-                    serde.deserialize<String>(cursor.getBlob(0)),
-                    serde.deserialize<T>(cursor.getBlob(1)),
+                    serde.deserialize(cursor.getBlob(0)),
+                    serde.deserialize(cursor.getBlob(1)),
                 )
             )
         }
@@ -800,7 +800,7 @@ open class Queryable internal constructor(
         ) { cursor ->
             result.add(
                 SearchResult(
-                    serde.deserialize<String>(cursor.getBlob(0)),
+                    serde.deserialize(cursor.getBlob(0)),
                     Raw(serde, cursor.getBlob(1)),
                     cursor.getString(2),
                 )

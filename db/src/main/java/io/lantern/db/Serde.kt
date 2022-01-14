@@ -116,7 +116,7 @@ internal class Serde {
             }
             is Char -> {
                 dataOut.write(CHAR)
-                dataOut.writeChar(data.toInt())
+                dataOut.writeChar(data.code)
             }
             is GeneratedMessageLite<*, *> -> {
                 val pbufTypeId = registeredProtocolBufferTypes[data::class.java]
@@ -245,19 +245,19 @@ internal class Serde {
     }
 
     companion object {
-        private const val TEXT = 'T'.toInt()
-        private const val KRYO = 'K'.toInt()
-        private const val PROTOCOL_BUFFER = 'P'.toInt()
-        private const val JSON = 'J'.toInt()
-        private const val BYTEARRAY = 'A'.toInt()
-        private const val BYTE = '2'.toInt()
-        private const val BOOLEAN = 'B'.toInt()
-        private const val SHORT = 'S'.toInt()
-        private const val INT = 'I'.toInt()
-        private const val LONG = 'L'.toInt()
-        private const val FLOAT = 'F'.toInt()
-        private const val DOUBLE = 'D'.toInt()
-        private const val CHAR = 'C'.toInt()
+        private const val TEXT = 'T'.code
+        private const val KRYO = 'K'.code
+        private const val PROTOCOL_BUFFER = 'P'.code
+        private const val JSON = 'J'.code
+        private const val BYTEARRAY = 'A'.code
+        private const val BYTE = '2'.code
+        private const val BOOLEAN = 'B'.code
+        private const val SHORT = 'S'.code
+        private const val INT = 'I'.code
+        private const val LONG = 'L'.code
+        private const val FLOAT = 'F'.code
+        private const val DOUBLE = 'D'.code
+        private const val CHAR = 'C'.code
         private val charset = Charset.defaultCharset()
     }
 }
