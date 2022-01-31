@@ -1039,14 +1039,15 @@ class Transaction internal constructor(
         val onConflictClause =
             if (updateIfPresent) " ON CONFLICT(path) DO UPDATE SET value = EXCLUDED.value" else ""
         val bytes = serde.serialize(value)
-        db.execSQL("INSERT INTO ${schema}_counters(id, value) VALUES(0, 0) ON CONFLICT(id) DO UPDATE SET value = value+1")
-        val nextRowId =
+        val nextRowId = if (fullText == null) null else {
+            db.execSQL("INSERT INTO ${schema}_counters(id, value) VALUES(0, 0) ON CONFLICT(id) DO UPDATE SET value = value+1")
             db.rawQuery("SELECT value FROM ${schema}_counters WHERE id = 0", null).use { cursor ->
                 if (cursor == null || !cursor.moveToNext()) {
                     throw RuntimeException("Unable to read counter value for full text indexing")
                 }
                 cursor.getLong(0)
             }
+        }
         db.execSQL(
             "INSERT INTO ${schema}_data(path, value, rowid) VALUES(?, ?, ?)$onConflictClause",
             arrayOf(serializedPath, bytes, nextRowId)

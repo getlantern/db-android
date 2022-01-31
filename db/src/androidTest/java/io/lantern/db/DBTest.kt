@@ -179,14 +179,6 @@ class DBTest {
                 values.forEach { (path, value) ->
                     tx.put(path, value, fullText = value.body)
                 }
-                tx.putAll(
-                    mapOf(
-                        "/list/1" to "/messages/a",
-                        "/list/2" to "/messages/b",
-                        "/list/3" to "/messages/c",
-                        "/list/4" to "/messages/d",
-                    )
-                )
             }
 
             assertEquals(
