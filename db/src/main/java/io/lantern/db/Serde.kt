@@ -201,11 +201,13 @@ internal class Serde {
             PROTOCOL_BUFFER -> {
                 val pbufTypeId = dataIn.readShort()
                 val pbufParser = registeredProtocolBufferParsers[pbufTypeId]
-                pbufParser!!(dataIn) as D
+                    ?: throw AssertionError("Attempt to deserialize unregistered protocol buffer type id $pbufTypeId")
+                pbufParser(dataIn) as D
             }
             JSON -> {
                 val jsonTypeId = dataIn.readShort()
                 val type = registeredJsonTypeIds[jsonTypeId]
+                    ?: throw AssertionError("Attempt to deserialize unregistered JSON type id $jsonTypeId")
                 gson.fromJson(dataIn.readUTF(), type) as D
             }
             else -> kryo.readClassAndObject(Input(dataIn)) as D
