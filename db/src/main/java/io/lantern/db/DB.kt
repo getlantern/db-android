@@ -755,7 +755,7 @@ open class Queryable internal constructor(
                     )
                 )
             } catch (t: Throwable) {
-                throw RuntimeException("Failed to deserialize value for path $path: ${t.message}", t)
+                throw RuntimeException("Failed to deserialize value for path $path on schema $schema for query $pathQuery: ${t.message}", t)
             }
         }
         return result
