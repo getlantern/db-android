@@ -748,10 +748,11 @@ open class Queryable internal constructor(
         doList(pathQuery, start, count, reverseSort) { cursor ->
             val path = serde.deserialize<String>(cursor.getBlob(0))
             try {
+                val value = serde.deserialize<T>(cursor.getBlob(1))
                 result.add(
                     PathAndValue(
                         path,
-                        serde.deserialize(cursor.getBlob(1)),
+                        value,
                     )
                 )
             } catch (t: Throwable) {
