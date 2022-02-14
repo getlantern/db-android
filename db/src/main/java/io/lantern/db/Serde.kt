@@ -205,7 +205,7 @@ internal class Serde {
                 val pbufParser = registeredProtocolBufferParsers[pbufTypeId]
                     ?: throw RuntimeException("Attempt to deserialize unregistered protocol buffer type id $pbufTypeId")
 
-                
+
                 pbufParser(dataIn) as D
             }
             JSON -> {

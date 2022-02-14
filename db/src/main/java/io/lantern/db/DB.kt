@@ -746,12 +746,17 @@ open class Queryable internal constructor(
     ): List<PathAndValue<T>> {
         val result = ArrayList<PathAndValue<T>>()
         doList(pathQuery, start, count, reverseSort) { cursor ->
-            result.add(
-                PathAndValue(
-                    serde.deserialize(cursor.getBlob(0)),
-                    serde.deserialize(cursor.getBlob(1)),
+            val path = serde.deserialize<String>(cursor.getBlob(0))
+            try {
+                result.add(
+                    PathAndValue(
+                        path,
+                        serde.deserialize(cursor.getBlob(1)),
+                    )
                 )
-            )
+            } catch (t: Throwable) {
+                throw RuntimeException("Failed to deserialize value for path $path: ${t.message}", t)
+            }
         }
         return result
     }
