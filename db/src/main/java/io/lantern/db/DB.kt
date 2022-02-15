@@ -746,18 +746,12 @@ open class Queryable internal constructor(
     ): List<PathAndValue<T>> {
         val result = ArrayList<PathAndValue<T>>()
         doList(pathQuery, start, count, reverseSort) { cursor ->
-            val path = serde.deserialize<String>(cursor.getBlob(0))
-            try {
-                val value = serde.deserialize<T>(cursor.getBlob(1))
-                result.add(
-                    PathAndValue(
-                        path,
-                        value,
-                    )
+            result.add(
+                PathAndValue(
+                    serde.deserialize<String>(cursor.getBlob(0)),
+                    serde.deserialize<T>(cursor.getBlob(1)),
                 )
-            } catch (t: Throwable) {
-                throw RuntimeException("Failed to deserialize value for path $path on schema $schema for query $pathQuery: ${t.message}", t)
-            }
+            )
         }
         return result
     }
@@ -1005,11 +999,22 @@ class Transaction internal constructor(
      */
     fun <T : Any?> put(path: String, value: T, fullText: String? = null): T {
         value?.let {
-            doPut(path, value, fullText, true)
+            doPut(path, value = value, fullText = fullText, updateIfPresent = true)
         } ?: run {
             delete(path)
         }
         return value
+    }
+
+    /**
+     * Like put but puts already serialized bytes.
+     */
+    fun <T : Any> putRaw(path: String, raw: Raw<T>?, fullText: String? = null) {
+        raw?.let {
+            doPut(path, bytes = it.allBytes, fullText = fullText, updateIfPresent = true)
+        } ?: run {
+            delete(path)
+        }
     }
 
     /**
@@ -1028,7 +1033,7 @@ class Transaction internal constructor(
      */
     fun putIfAbsent(path: String, value: Any, fullText: String? = null): Boolean {
         return try {
-            doPut(path, value, fullText, false)
+            doPut(path, value = value, fullText = fullText, updateIfPresent = false)
             true
         } catch (e: SQLiteConstraintException) {
             false
@@ -1037,14 +1042,15 @@ class Transaction internal constructor(
 
     private fun doPut(
         path: String,
-        value: Any,
-        fullText: String?,
+        value: Any? = null,
+        fullText: String? = null,
+        bytes: ByteArray? = null,
         updateIfPresent: Boolean
     ) {
         val serializedPath = serde.serialize(path)
         val onConflictClause =
             if (updateIfPresent) " ON CONFLICT(path) DO UPDATE SET value = EXCLUDED.value" else ""
-        val bytes = serde.serialize(value)
+        val actualBytes = bytes ?: serde.serialize(value!!)
         val nextRowId = if (fullText == null) null else {
             db.execSQL("INSERT INTO ${schema}_counters(id, value) VALUES(0, 0) ON CONFLICT(id) DO UPDATE SET value = value+1")
             db.rawQuery("SELECT value FROM ${schema}_counters WHERE id = 0", null).use { cursor ->
@@ -1056,7 +1062,7 @@ class Transaction internal constructor(
         }
         db.execSQL(
             "INSERT INTO ${schema}_data(path, value, rowid) VALUES(?, ?, ?)$onConflictClause",
-            arrayOf(serializedPath, bytes, nextRowId)
+            arrayOf(serializedPath, actualBytes, nextRowId)
         )
         if (fullText != null) {
             val rowId = db.rawQuery(
@@ -1080,7 +1086,8 @@ class Transaction internal constructor(
                 )
             }
         }
-        updatesBySchema[schema]!![path] = Raw(serde, bytes, value)
+        val raw = value?.let { Raw(serde, actualBytes, value) } ?: Raw(serde, actualBytes)
+        updatesBySchema[schema]!![path] = raw
         deletionsBySchema[schema]!! -= path
     }
 

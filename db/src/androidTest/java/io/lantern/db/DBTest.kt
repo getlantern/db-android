@@ -265,9 +265,14 @@ class DBTest {
                 tx.put("path", "c")
             }
             assertEquals("put should have returned correct value", "c", putValue)
-            assertEquals("value should have been udpated by regular put", "c", db.get("path"))
+            assertEquals("value should have been updated by regular put", "c", db.get("path"))
 
-            assertEquals(arrayListOf("a", "c"), updates)
+            db.mutatePublishBlocking { tx ->
+                tx.putRaw("path", Raw<String>(db.serde, db.serde.serialize("d")))
+                assertEquals("d", tx.get("path"))
+            }
+
+            assertEquals(arrayListOf("a", "c", "d"), updates)
 
             db.mutate { tx ->
                 tx.put("ap", "a")

@@ -5,7 +5,7 @@ package io.lantern.db
  */
 class Raw<T : Any> internal constructor(
     private val serde: Serde,
-    private val allBytes: ByteArray,
+    internal val allBytes: ByteArray,
     get: Lazy<T>
 ) {
     val bytes: ByteArray by lazy { serde.rawWithoutHeader(allBytes) }
