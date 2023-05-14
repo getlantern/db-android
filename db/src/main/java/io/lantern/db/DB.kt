@@ -7,7 +7,7 @@ import ca.gedge.radixtree.RadixTreeVisitor
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentHashMapOf
 import net.sqlcipher.Cursor
-import net.sqlcipher.database.SQLiteConstraintException
+import android.database.sqlite.SQLiteConstraintException
 import net.sqlcipher.database.SQLiteDatabase
 import java.io.Closeable
 import java.io.File
