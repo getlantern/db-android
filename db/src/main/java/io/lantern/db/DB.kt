@@ -2,16 +2,16 @@ package io.lantern.db
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.database.sqlite.SQLiteConstraintException
 import ca.gedge.radixtree.RadixTree
 import ca.gedge.radixtree.RadixTreeVisitor
+import com.getkeepsafe.relinker.ReLinker
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentHashMapOf
 import net.sqlcipher.Cursor
-import android.database.sqlite.SQLiteConstraintException
 import net.sqlcipher.database.SQLiteDatabase
 import java.io.Closeable
 import java.io.File
-import java.util.HashSet
 import java.util.TreeSet
 import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
@@ -20,24 +20,9 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.collections.ArrayList
-import kotlin.collections.HashMap
-import kotlin.collections.List
-import kotlin.collections.Map
-import kotlin.collections.MutableMap
-import kotlin.collections.MutableSet
-import kotlin.collections.Set
 import kotlin.collections.component1
 import kotlin.collections.component2
-import kotlin.collections.emptyMap
-import kotlin.collections.emptySet
-import kotlin.collections.forEach
-import kotlin.collections.map
-import kotlin.collections.mapOf
-import kotlin.collections.minusAssign
-import kotlin.collections.plusAssign
 import kotlin.collections.set
-import kotlin.collections.toMap
 
 private val trueAndFalse = arrayOf(false, true)
 
@@ -374,7 +359,15 @@ class DB private constructor(
             // up we can get SQLiteException: file is not a database android. We should try to clean
             // this up automatically, but be careful to not delete legitimate data in case it was
             // corrupted in a different way.
-            SQLiteDatabase.loadLibs(ctx)
+
+            // We use ReLinker here to deal with occasional errors like the below
+            // UnsatisfiedLinkError: dlopen failed: library "libsqlcipher.so" not found
+            SQLiteDatabase.loadLibs(ctx) { libraries: Array<String?> ->
+                for (library in libraries) {
+                    ReLinker.loadLibrary(ctx, library)
+                }
+            }
+
             val db = SQLiteDatabase.openOrCreateDatabase(filePath, password, null)
             if (!db.enableWriteAheadLogging()) {
                 throw RuntimeException("Unable to enable write ahead logging")
