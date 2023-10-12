@@ -619,7 +619,7 @@ class DB private constructor(
 }
 
 open class Queryable internal constructor(
-    protected val db: SQLiteDatabase,
+    val db: SQLiteDatabase,
     internal val schema: String,
     internal val serde: Serde
 ) {
