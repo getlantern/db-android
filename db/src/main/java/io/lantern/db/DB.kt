@@ -564,7 +564,9 @@ class DB private constructor(
                         db.setTransactionSuccessful()
                         result
                     } finally {
-                        db.endTransaction()
+                        if (db.inTransaction()) {
+                            db.endTransaction()
+                        }
                         currentTransaction.remove()
                     }
                 }
