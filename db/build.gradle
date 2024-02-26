@@ -105,11 +105,11 @@ afterEvaluate {
 //publishing {
 //    publications {
 //        // Define MavenPublication for your library
-//        maven(MavenPublication) {
+//        mavenJava(MavenPublication) {
 //            groupId = 'io.lantern' // Removed trailing dot from group id
 //            artifactId = 'db'
 //            version = '1.0.1'
-//            from(components.java)
+//            from(components.)
 //        }
 //    }
 //}
