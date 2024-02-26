@@ -88,7 +88,20 @@ protobuf {
         }
     }
 }
+//tasks.register('packageSource', Jar) {
+//    archiveClassifier = 'sources'
+//    from(sourceSets.main.allSource) // Include all source files from the 'main' source set
+//}
 
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                from components.release
+            }
+        }
+    }
+}
 //publishing {
 //    publications {
 //        // Define MavenPublication for your library
@@ -96,6 +109,7 @@ protobuf {
 //            groupId = 'io.lantern' // Removed trailing dot from group id
 //            artifactId = 'db'
 //            version = '1.0.1'
+//            from(components.java)
 //        }
 //    }
 //}
