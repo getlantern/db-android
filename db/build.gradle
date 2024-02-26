@@ -45,11 +45,11 @@ android {
 dependencies {
 
     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
-    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.core:core-ktx:1.7.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-collections-immutable-jvm:0.3.5'
 
     api group: 'net.zetetic', name: 'android-database-sqlcipher', version: '4.5.4'
-    api "androidx.sqlite:sqlite-ktx:2.4.0"
+    api "androidx.sqlite:sqlite-ktx:2.2.0"
 
     implementation ('com.esotericsoftware:kryo:5.0.3') {
         exclude group: "org.objenesis"
@@ -88,3 +88,14 @@ protobuf {
         }
     }
 }
+
+//publishing {
+//    publications {
+//        // Define MavenPublication for your library
+//        maven(MavenPublication) {
+//            groupId = 'io.lantern' // Removed trailing dot from group id
+//            artifactId = 'db'
+//            version = '1.0.1'
+//        }
+//    }
+//}
