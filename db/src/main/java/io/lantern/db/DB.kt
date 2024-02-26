@@ -565,6 +565,7 @@ class DB private constructor(
                         result
                     } finally {
                         if (db.inTransaction()) {
+                            // Only end transaction if it's still active
                             db.endTransaction()
                         }
                         currentTransaction.remove()
