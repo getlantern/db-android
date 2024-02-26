@@ -37,7 +37,8 @@ android {
     sourceSets {
         test {
             proto.srcDirs += 'src/test/protos'
-            java.srcDirs += 'build/generated/source/proto/debugUnitTest/java' // this is a hack to get Android Studio to recognize the generated protocol buffer classes
+            java.srcDirs += 'build/generated/source/proto/debugUnitTest/java'
+            // this is a hack to get Android Studio to recognize the generated protocol buffer classes
         }
     }
 }
@@ -51,7 +52,7 @@ dependencies {
     api group: 'net.zetetic', name: 'android-database-sqlcipher', version: '4.5.4'
     api "androidx.sqlite:sqlite-ktx:2.2.0"
 
-    implementation ('com.esotericsoftware:kryo:5.0.3') {
+    implementation('com.esotericsoftware:kryo:5.0.3') {
         exclude group: "org.objenesis"
     }
     implementation 'org.objenesis:objenesis:3.2'
@@ -88,15 +89,14 @@ protobuf {
         }
     }
 }
-//tasks.register('packageSource', Jar) {
-//    archiveClassifier = 'sources'
-//    from(sourceSets.main.allSource) // Include all source files from the 'main' source set
-//}
 
 afterEvaluate {
     publishing {
         publications {
             release(MavenPublication) {
+                groupId = 'io.lantern'
+                artifactId = 'db'
+                version = '1.0.1'
                 from components.release
             }
         }
