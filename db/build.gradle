@@ -34,13 +34,13 @@ android {
         jvmTarget = '1.8'
     }
 
-    sourceSets {
-        test {
-            proto.srcDirs += 'src/test/protos'
-            java.srcDirs += 'build/generated/source/proto/debugUnitTest/java'
-            // this is a hack to get Android Studio to recognize the generated protocol buffer classes
-        }
-    }
+//    sourceSets {
+//        test {
+//            proto.srcDirs += 'src/test/protos'
+//            java.srcDirs += 'build/generated/source/proto/debugUnitTest/java'
+//            // this is a hack to get Android Studio to recognize the generated protocol buffer classes
+//        }
+//    }
 }
 
 dependencies {
@@ -90,6 +90,12 @@ protobuf {
     }
 }
 
+
+task androidSourcesJar(type: Jar) {
+    archiveClassifier.set('sources')
+    from android.sourceSets.main.java.srcDirs
+}
+
 afterEvaluate {
     publishing {
         publications {
@@ -97,7 +103,9 @@ afterEvaluate {
                 groupId = 'io.lantern'
                 artifactId = 'db'
                 version = '1.0.1'
+
                 from components.release
+                artifact androidSourcesJar
             }
         }
     }
