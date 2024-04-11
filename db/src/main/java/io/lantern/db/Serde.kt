@@ -64,6 +64,9 @@ internal class Serde {
             val parseMethod = pbufType.getMethod("parseFrom", InputStream::class.java)
             registeredProtocolBufferTypes[pbufType] = id.toInt()
             try {
+
+
+
                 registeredProtocolBufferParsers[id] =
                     { stream -> parseMethod.invoke(pbufType, stream) as GeneratedMessageLite<*, *> }
             } catch (e:Exception) {
