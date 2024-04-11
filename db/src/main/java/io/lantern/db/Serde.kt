@@ -63,8 +63,12 @@ internal class Serde {
             val pbufType = type as Class<GeneratedMessageLite<*, *>>
             val parseMethod = pbufType.getMethod("parseFrom", InputStream::class.java)
             registeredProtocolBufferTypes[pbufType] = id.toInt()
-            registeredProtocolBufferParsers[id] =
-                { stream -> parseMethod.invoke(pbufType, stream) as GeneratedMessageLite<*, *> }
+            try {
+                registeredProtocolBufferParsers[id] =
+                    { stream -> parseMethod.invoke(pbufType, stream) as GeneratedMessageLite<*, *> }
+            } catch (e:Exception) {
+
+            }
         } else {
             kryo.register(Registration(type, kryo.getDefaultSerializer(type), id.toInt()))
             registeredJsonTypes[type] = id.toInt()
