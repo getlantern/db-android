@@ -25,12 +25,14 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
-        jvmTarget = '1.8'
+        jvmTarget = '17'
+        freeCompilerArgs = ["-Xallow-result-return-type"]
     }
 
     sourceSets {
@@ -44,11 +46,11 @@ android {
 dependencies {
 
     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
-    implementation 'androidx.core:core-ktx:1.9.0'
+    implementation 'androidx.core:core-ktx:1.13.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-collections-immutable-jvm:0.3.5'
 
-    api group: 'net.zetetic', name: 'android-database-sqlcipher', version: '4.5.4'
-    api "androidx.sqlite:sqlite-ktx:2.2.0"
+    api group: 'net.zetetic', name: 'android-database-sqlcipher', version: '4.5.6'
+    api "androidx.sqlite:sqlite-ktx:2.4.0"
 
     implementation ('com.esotericsoftware:kryo:5.0.3') {
         exclude group: "org.objenesis"
