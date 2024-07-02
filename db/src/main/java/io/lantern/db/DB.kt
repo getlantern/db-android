@@ -3,6 +3,8 @@ package io.lantern.db
 import android.content.Context
 import android.content.SharedPreferences
 import android.database.sqlite.SQLiteConstraintException
+import android.database.sqlite.SQLiteException
+import android.util.Log
 import ca.gedge.radixtree.RadixTree
 import ca.gedge.radixtree.RadixTreeVisitor
 import com.getkeepsafe.relinker.ReLinker
@@ -23,6 +25,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.collections.component1
 import kotlin.collections.component2
 import kotlin.collections.set
+
+private const val LOG_TAG = "db-android"
 
 private val trueAndFalse = arrayOf(false, true)
 
@@ -555,24 +559,19 @@ class DB private constructor(
             // schedule the work to run in our single threaded executor
             val future = txExecutor.submit(
                 Callable {
+                    db.beginTransaction()
                     try {
-                        //https://stackoverflow.com/a/63931025
-                        //SQLite throwing exception Exception android.database.sqlite.SQLiteException: cannot start a transaction within a transaction: BEGIN EXCLUSIVE;
-                        // It the transaction is already started, then we should not come on this at all some how sql throwing exception
-                        if (db.inTransaction()) {
-                            db.endTransaction()
-                        }
-                        db.beginTransaction()
                         currentTransaction.set(tx)
                         val result = fn(tx)
                         // publish to synchronous subscribers inside of the transaction
                         tx.publish(true)
                         db.setTransactionSuccessful()
                         result
+                    } catch (e: SQLiteException) {
+                        e.printStackTrace()
+                        Log.e(LOG_TAG, "Error executing transaction", e)
                     } finally {
-                        if(db.inTransaction()){
-                            db.endTransaction()
-                        }
+                        db.endTransaction()
                         currentTransaction.remove()
                     }
                 }
