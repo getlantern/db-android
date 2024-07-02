@@ -556,12 +556,6 @@ class DB private constructor(
             val future = txExecutor.submit(
                 Callable {
                     try {
-                        //https://stackoverflow.com/a/63931025
-                        //SQLite throwing exception Exception android.database.sqlite.SQLiteException: cannot start a transaction within a transaction: BEGIN EXCLUSIVE;
-                        // It the transaction is already started, then we should not come on this at all some how sql throwing exception
-                        if (db.inTransaction()) {
-                            db.endTransaction()
-                        }
                         db.beginTransaction()
                         currentTransaction.set(tx)
                         val result = fn(tx)
