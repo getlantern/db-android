@@ -569,7 +569,8 @@ class DB private constructor(
                         result
                     } catch (e: SQLiteException) {
                         e.printStackTrace()
-                        Log.e(LOG_TAG, "Error executing transaction", e)
+                        Log.e(LOG_TAG, "Error executing inner transaction", e)
+                        throw e
                     } finally {
                         db.endTransaction()
                         currentTransaction.remove()
@@ -585,6 +586,7 @@ class DB private constructor(
                 }
                 return result
             } catch (e: ExecutionException) {
+                Log.e(LOG_TAG, "Error executing transaction", e)
                 throw e.cause ?: e
             }
         }
