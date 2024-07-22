@@ -557,38 +557,61 @@ class DB private constructor(
             }
         } else {
             // schedule the work to run in our single threaded executor
-            val future = txExecutor.submit(
-                Callable {
-                    db.beginTransaction()
-                    try {
-                        currentTransaction.set(tx)
-                        val result = fn(tx)
-                        // publish to synchronous subscribers inside of the transaction
-                        tx.publish(true)
-                        db.setTransactionSuccessful()
-                        result
-                    } catch (e: SQLiteException) {
-                        e.printStackTrace()
-                        Log.e(LOG_TAG, "Error executing inner transaction", e)
-                        throw e
-                    } finally {
-                        db.endTransaction()
-                        currentTransaction.remove()
-                    }
-                }
-            )
+             db.beginTransaction() // Assuming db is your database instance
             try {
-                val result = future.get()
-                // publish to asynchronous subscribers outside of the txExecutor
+                currentTransaction.set(tx)
+                val result = fn(tx)
+                // Publish to synchronous subscribers inside of the transaction
+                tx.publish(true)
+                db.setTransactionSuccessful()
+
+                // Publish to asynchronous subscribers outside of the transaction
                 val publishResult = publishExecutor.submit { tx.publish(false) }
                 if (publishBlocking) {
                     publishResult.get()
                 }
+
                 return result
-            } catch (e: ExecutionException) {
+            } catch (e: SQLiteException) {
+                e.printStackTrace()
                 Log.e(LOG_TAG, "Error executing transaction", e)
-                throw e.cause ?: e
+                throw e // or handle the error as needed
+            } finally {
+                db.endTransaction()
+                currentTransaction.remove()
             }
+//            val future = txExecutor.submit(
+//                Callable {
+//                    db.beginTransaction()
+//                    try {
+//                        currentTransaction.set(tx)
+//                        val result = fn(tx)
+//                        // publish to synchronous subscribers inside of the transaction
+//                        tx.publish(true)
+//                        db.setTransactionSuccessful()
+//                        result
+//                    } catch (e: SQLiteException) {
+//                        e.printStackTrace()
+//                        Log.e(LOG_TAG, "Error executing inner transaction", e)
+//                        throw e
+//                    } finally {
+//                        db.endTransaction()
+//                        currentTransaction.remove()
+//                    }
+//                }
+//            )
+//            try {
+//                val result = future.get()
+//                // publish to asynchronous subscribers outside of the txExecutor
+//                val publishResult = publishExecutor.submit { tx.publish(false) }
+//                if (publishBlocking) {
+//                    publishResult.get()
+//                }
+//                return result
+//            } catch (e: ExecutionException) {
+//                Log.e(LOG_TAG, "Error executing transaction", e)
+//                throw e.cause ?: e
+//            }
         }
     }
 
