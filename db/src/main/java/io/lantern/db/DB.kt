@@ -514,6 +514,7 @@ class DB private constructor(
      * All mutating happens on a single thread. Nested calls to mutate are allowed and will
      * each get their own sub-transaction implemented using savepoints.
      */
+
     fun <T> mutate(publishBlocking: Boolean = false, fn: (tx: Transaction) -> T): T {
         var inExecutor = false
         val tx = synchronized(this) {
@@ -557,7 +558,7 @@ class DB private constructor(
             }
         } else {
             // schedule the work to run in our single threaded executor
-             db.beginTransaction() // Assuming db is your database instance
+             db.beginTransaction()
             try {
                 currentTransaction.set(tx)
                 val result = fn(tx)
@@ -570,7 +571,6 @@ class DB private constructor(
                 if (publishBlocking) {
                     publishResult.get()
                 }
-
                 return result
             } catch (e: SQLiteException) {
                 e.printStackTrace()
