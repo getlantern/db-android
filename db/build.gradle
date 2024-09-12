@@ -49,7 +49,7 @@ dependencies {
     implementation 'androidx.core:core-ktx:1.13.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-collections-immutable-jvm:0.3.7'
 
-    api group: 'net.zetetic', name: 'android-database-sqlcipher', version: '4.5.4'
+    api group: 'net.zetetic', name: 'android-database-sqlcipher', version: '4.6.4'
     api "androidx.sqlite:sqlite-ktx:2.4.0"
 
     implementation ('com.esotericsoftware:kryo:5.6.0') {
