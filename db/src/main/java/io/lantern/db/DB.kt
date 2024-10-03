@@ -158,43 +158,43 @@ abstract class DetailsSubscriber<T : Any>(
             subscribedDetailPathsToOriginalPaths.remove(path)
                 ?.let { originalPath -> deletions.add(originalPath) }
             subscribedPaths.visit(object :
-                    RadixTreeVisitor<Boolean, Void?> {
-                    override fun visit(key: String?, value: Boolean?): Boolean {
-                        if (key == null || !path.startsWith(key)) {
-                            return false
-                        }
-                        deletions.add(path)
-                        subscribedOriginalPathsToDetailPaths.remove(path)
-                            ?.let { subscribedDetailPathsToOriginalPaths.remove(it) }
-                        return true
+                RadixTreeVisitor<Boolean, Void?> {
+                override fun visit(key: String?, value: Boolean?): Boolean {
+                    if (key == null || !path.startsWith(key)) {
+                        return false
                     }
+                    deletions.add(path)
+                    subscribedOriginalPathsToDetailPaths.remove(path)
+                        ?.let { subscribedDetailPathsToOriginalPaths.remove(it) }
+                    return true
+                }
 
-                    override fun getResult(): Void? {
-                        return null
-                    }
-                })
+                override fun getResult(): Void? {
+                    return null
+                }
+            })
         }
 
         // then update our detail subscription paths
         val updatedPaths = HashMap<String, String>()
         changes.updates.forEach { (path, value) ->
             subscribedPaths.visit(object :
-                    RadixTreeVisitor<Boolean, Void?> {
-                    override fun visit(key: String?, v: Boolean?): Boolean {
-                        if (key == null || !path.startsWith(key)) {
-                            return false
-                        }
-                        val detailPath = value.value as String
-                        subscribedOriginalPathsToDetailPaths[path] = detailPath
-                        subscribedDetailPathsToOriginalPaths[detailPath] = path
-                        updatedPaths[path] = detailPath
-                        return true
+                RadixTreeVisitor<Boolean, Void?> {
+                override fun visit(key: String?, v: Boolean?): Boolean {
+                    if (key == null || !path.startsWith(key)) {
+                        return false
                     }
+                    val detailPath = value.value as String
+                    subscribedOriginalPathsToDetailPaths[path] = detailPath
+                    subscribedDetailPathsToOriginalPaths[detailPath] = path
+                    updatedPaths[path] = detailPath
+                    return true
+                }
 
-                    override fun getResult(): Void? {
-                        return null
-                    }
-                })
+                override fun getResult(): Void? {
+                    return null
+                }
+            })
         }
 
         // then capture updates to details
@@ -520,15 +520,14 @@ class DB private constructor(
         val tx = synchronized(this) {
             val currentTx = currentTransaction.get()
             if (currentTx == null) {
-                try{
+                try {
                     Transaction(
                         db, schema, serde,
                         subscribersBySync.map { (synchronous, subscribers) ->
                             synchronous to HashMap(mapOf(schema to subscribers))
                         }.toMap()
                     )
-                }catch (e: Exception){
-                    Log.e(LOG_TAG, "Error creating transaction", e)
+                } catch (e: Exception) {
                     throw e
                 }
 
@@ -564,19 +563,12 @@ class DB private constructor(
             }
         } else {
             // schedule the work to run in our single threaded executor
-
             try {
-                if(db.inTransaction()){
+                if (db.inTransaction()) {
                     Log.e(LOG_TAG, "Already in transaction")
                     db.endTransaction()
                 }
-                try {
-                    db.beginTransaction()
-                } catch (e: SQLiteException) {
-                    Log.e(LOG_TAG, "Error starting transaction", e)
-                    db.endTransaction()
-                    db.beginTransaction()
-                }
+                db.beginTransaction()
                 currentTransaction.set(tx)
                 val result = fn(tx)
                 // Publish to synchronous subscribers inside of the transaction
@@ -590,47 +582,14 @@ class DB private constructor(
                 }
                 return result
             } catch (e: SQLiteException) {
-                e.printStackTrace()
                 Log.e(LOG_TAG, "Error executing transaction", e)
                 throw e // or handle the error as needed
             } finally {
-                if(db.inTransaction()){
+                if (db.inTransaction()) {
                     db.endTransaction()
                 }
                 currentTransaction.remove()
             }
-//            val future = txExecutor.submit(
-//                Callable {
-//                    db.beginTransaction()
-//                    try {
-//                        currentTransaction.set(tx)
-//                        val result = fn(tx)
-//                        // publish to synchronous subscribers inside of the transaction
-//                        tx.publish(true)
-//                        db.setTransactionSuccessful()
-//                        result
-//                    } catch (e: SQLiteException) {
-//                        e.printStackTrace()
-//                        Log.e(LOG_TAG, "Error executing inner transaction", e)
-//                        throw e
-//                    } finally {
-//                        db.endTransaction()
-//                        currentTransaction.remove()
-//                    }
-//                }
-//            )
-//            try {
-//                val result = future.get()
-//                // publish to asynchronous subscribers outside of the txExecutor
-//                val publishResult = publishExecutor.submit { tx.publish(false) }
-//                if (publishBlocking) {
-//                    publishResult.get()
-//                }
-//                return result
-//            } catch (e: ExecutionException) {
-//                Log.e(LOG_TAG, "Error executing transaction", e)
-//                throw e.cause ?: e
-//            }
         }
     }
 
@@ -1163,60 +1122,60 @@ class Transaction internal constructor(
         updatesBySchema.forEach { (schema, updates) ->
             updates.forEach { (path, newValue) ->
                 subscribersBySchema[schema]?.visit(object :
-                        RadixTreeVisitor<PersistentMap<String, RawSubscriber<Any>>, Void?> {
-                        override fun visit(
-                            key: String?,
-                            value: PersistentMap<String, RawSubscriber<Any>>?
-                        ): Boolean {
-                            if (key == null || !path.startsWith(key)) {
-                                return false
-                            }
-                            value?.values?.forEach {
-                                var changes = changesBySubscriber[it]
-                                if (changes == null) {
-                                    changes =
-                                        RawChangeSet(updates = HashMap(), deletions = HashSet())
-                                    changesBySubscriber[it] = changes
-                                }
-                                (changes.updates as MutableMap)[path] = newValue
-                            }
-                            return true
+                    RadixTreeVisitor<PersistentMap<String, RawSubscriber<Any>>, Void?> {
+                    override fun visit(
+                        key: String?,
+                        value: PersistentMap<String, RawSubscriber<Any>>?
+                    ): Boolean {
+                        if (key == null || !path.startsWith(key)) {
+                            return false
                         }
+                        value?.values?.forEach {
+                            var changes = changesBySubscriber[it]
+                            if (changes == null) {
+                                changes =
+                                    RawChangeSet(updates = HashMap(), deletions = HashSet())
+                                changesBySubscriber[it] = changes
+                            }
+                            (changes.updates as MutableMap)[path] = newValue
+                        }
+                        return true
+                    }
 
-                        override fun getResult(): Void? {
-                            return null
-                        }
-                    })
+                    override fun getResult(): Void? {
+                        return null
+                    }
+                })
             }
         }
 
         deletionsBySchema.forEach { (schema, deletions) ->
             deletions.forEach { path ->
                 subscribersBySchema[schema]?.visit(object :
-                        RadixTreeVisitor<PersistentMap<String, RawSubscriber<Any>>, Void?> {
-                        override fun visit(
-                            key: String?,
-                            value: PersistentMap<String, RawSubscriber<Any>>?
-                        ): Boolean {
-                            if (key == null || !path.startsWith(key)) {
-                                return false
-                            }
-                            value?.values?.forEach {
-                                var changes = changesBySubscriber[it]
-                                if (changes == null) {
-                                    changes =
-                                        RawChangeSet(updates = HashMap(), deletions = HashSet())
-                                    changesBySubscriber[it] = changes!!
-                                }
-                                (changes!!.deletions as MutableSet).add(path)
-                            }
-                            return true
+                    RadixTreeVisitor<PersistentMap<String, RawSubscriber<Any>>, Void?> {
+                    override fun visit(
+                        key: String?,
+                        value: PersistentMap<String, RawSubscriber<Any>>?
+                    ): Boolean {
+                        if (key == null || !path.startsWith(key)) {
+                            return false
                         }
+                        value?.values?.forEach {
+                            var changes = changesBySubscriber[it]
+                            if (changes == null) {
+                                changes =
+                                    RawChangeSet(updates = HashMap(), deletions = HashSet())
+                                changesBySubscriber[it] = changes!!
+                            }
+                            (changes!!.deletions as MutableSet).add(path)
+                        }
+                        return true
+                    }
 
-                        override fun getResult(): Void? {
-                            return null
-                        }
-                    })
+                    override fun getResult(): Void? {
+                        return null
+                    }
+                })
             }
         }
 
