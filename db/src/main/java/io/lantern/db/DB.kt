@@ -563,13 +563,9 @@ class DB private constructor(
                 currentTransaction.set(tx)
             }
         } else {
-            // schedule the work to run in our single threaded executor
             try {
-                if (db.inTransaction()) {
-                    Log.e(LOG_TAG, "Already in transaction")
-                    db.endTransaction()
-                }
-                db.beginTransactionNonExclusive()
+                // schedule the work to run in our single threaded executor
+                db.beginTransaction()
                 currentTransaction.set(tx)
                 val result = fn(tx)
                 // Publish to synchronous subscribers inside of the transaction
@@ -586,11 +582,43 @@ class DB private constructor(
                 Log.e(LOG_TAG, "Error executing transaction", e)
                 throw e // or handle the error as needed
             } finally {
-                if (db.inTransaction()) {
+                if(db.inTransaction()) {
                     db.endTransaction()
                 }
                 currentTransaction.remove()
             }
+//            val future = txExecutor.submit(
+//                Callable {
+//                    db.beginTransaction()
+//                    try {
+//                        currentTransaction.set(tx)
+//                        val result = fn(tx)
+//                        // publish to synchronous subscribers inside of the transaction
+//                        tx.publish(true)
+//                        db.setTransactionSuccessful()
+//                        result
+//                    } catch (e: SQLiteException) {
+//                        e.printStackTrace()
+//                        Log.e(LOG_TAG, "Error executing inner transaction", e)
+//                        throw e
+//                    } finally {
+//                        db.endTransaction()
+//                        currentTransaction.remove()
+//                    }
+//                }
+//            )
+//            try {
+//                val result = future.get()
+//                // publish to asynchronous subscribers outside of the txExecutor
+//                val publishResult = publishExecutor.submit { tx.publish(false) }
+//                if (publishBlocking) {
+//                    publishResult.get()
+//                }
+//                return result
+//            } catch (e: ExecutionException) {
+//                Log.e(LOG_TAG, "Error executing transaction", e)
+//                throw e.cause ?: e
+//            }
         }
     }
 
