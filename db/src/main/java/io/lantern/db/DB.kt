@@ -520,12 +520,18 @@ class DB private constructor(
         val tx = synchronized(this) {
             val currentTx = currentTransaction.get()
             if (currentTx == null) {
-                Transaction(
-                    db, schema, serde,
-                    subscribersBySync.map { (synchronous, subscribers) ->
-                        synchronous to HashMap(mapOf(schema to subscribers))
-                    }.toMap()
-                )
+                try{
+                    Transaction(
+                        db, schema, serde,
+                        subscribersBySync.map { (synchronous, subscribers) ->
+                            synchronous to HashMap(mapOf(schema to subscribers))
+                        }.toMap()
+                    )
+                }catch (e: Exception){
+                    Log.e(LOG_TAG, "Error creating transaction", e)
+                    throw e
+                }
+
             } else {
                 inExecutor = true
                 currentTx
@@ -558,8 +564,9 @@ class DB private constructor(
             }
         } else {
             // schedule the work to run in our single threaded executor
-             db.beginTransaction()
+
             try {
+                db.beginTransaction()
                 currentTransaction.set(tx)
                 val result = fn(tx)
                 // Publish to synchronous subscribers inside of the transaction
