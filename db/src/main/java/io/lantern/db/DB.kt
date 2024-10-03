@@ -566,6 +566,10 @@ class DB private constructor(
             // schedule the work to run in our single threaded executor
 
             try {
+                if(db.inTransaction()){
+                    Log.e(LOG_TAG, "Already in transaction")
+                    db.endTransaction()
+                }
                 db.beginTransaction()
                 currentTransaction.set(tx)
                 val result = fn(tx)
@@ -584,7 +588,9 @@ class DB private constructor(
                 Log.e(LOG_TAG, "Error executing transaction", e)
                 throw e // or handle the error as needed
             } finally {
-                db.endTransaction()
+                if(db.inTransaction()){
+                    db.endTransaction()
+                }
                 currentTransaction.remove()
             }
 //            val future = txExecutor.submit(
