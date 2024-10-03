@@ -384,6 +384,7 @@ class DB private constructor(
                     }
                 }
             }
+            db.execSQL("PRAGMA busy_timeout = 5000") // Wait for 5 seconds before failing
             return DB(db, schema, name)
         }
     }
@@ -568,7 +569,7 @@ class DB private constructor(
                     Log.e(LOG_TAG, "Already in transaction")
                     db.endTransaction()
                 }
-                db.beginTransaction()
+                db.beginTransactionNonExclusive()
                 currentTransaction.set(tx)
                 val result = fn(tx)
                 // Publish to synchronous subscribers inside of the transaction
