@@ -384,7 +384,7 @@ class DB private constructor(
                     }
                 }
             }
-            db.execSQL("PRAGMA busy_timeout = 5000") // Wait for 5 seconds before failing
+            db.query("PRAGMA busy_timeout = 5000") // Wait for 5 seconds before failing
             return DB(db, schema, name)
         }
     }
