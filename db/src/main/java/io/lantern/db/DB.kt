@@ -570,7 +570,13 @@ class DB private constructor(
                     Log.e(LOG_TAG, "Already in transaction")
                     db.endTransaction()
                 }
-                db.beginTransaction()
+                try {
+                    db.beginTransaction()
+                } catch (e: SQLiteException) {
+                    Log.e(LOG_TAG, "Error starting transaction", e)
+                    db.endTransaction()
+                    db.beginTransaction()
+                }
                 currentTransaction.set(tx)
                 val result = fn(tx)
                 // Publish to synchronous subscribers inside of the transaction
